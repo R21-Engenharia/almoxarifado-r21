@@ -72,7 +72,7 @@ def usuario_logado(authorization: str | None = Header(default=None)) -> str:
 def usuario_admin(authorization: str | None = Header(default=None)) -> str:
     """Idem, mas exige role 'admin' (para escrita no ERP)."""
     email = usuario_logado(authorization)
-    if _auth_ativo() and supa.role_do_email(email) != "admin":
+    if _auth_ativo() and (supa.role_do_email(email) or "").strip().lower() != "admin":
         raise HTTPException(403, "Ação restrita a administradores.")
     return email
 
