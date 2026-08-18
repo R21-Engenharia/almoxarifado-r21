@@ -149,6 +149,10 @@ tr.estornado { opacity: .5; }
 .ident-card button { width: 100%; background: var(--accent); color: #fff; border: none;
   border-radius: 10px; padding: 12px; font-weight: 600; }
 .ident-card button:disabled { opacity: .4; }
+.ident-card .ou { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; margin: 14px 0; }
+.ident-card .ou::before, .ident-card .ou::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.ident-card button.google { background: #fff; color: #1f2937; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.ident-card button.google:hover { background: #f1f3f5; }
 
 /* desktop */
 @media (min-width: 720px) {

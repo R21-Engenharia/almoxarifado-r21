@@ -91,6 +91,16 @@ function Login() {
     setCarregando(false)
   }
 
+  const google = async () => {
+    if (!supabase) return
+    setErro('')
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    })
+    if (error) setErro('Não foi possível entrar com o Google.')
+  }
+
   return (
     <div className="ident">
       <div className="ident-card">
@@ -105,6 +115,11 @@ function Login() {
         {erro && <div className="msg bad" style={{ marginBottom: 12 }}>{erro}</div>}
         <button disabled={!email.trim() || !senha || carregando} onClick={entrar}>
           {carregando ? 'Entrando…' : 'Entrar'}</button>
+        <div className="ou"><span>ou</span></div>
+        <button className="google" onClick={google}>
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.9 2.4 30.4 0 24 0 14.6 0 6.4 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.1 5.3-4.6 7l7.1 5.5c4.1-3.8 6.5-9.4 6.5-16z"/><path fill="#FBBC05" d="M10.4 28.3c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7.9-6.1C.9 16.1 0 19.9 0 24s.9 7.9 2.5 11.1l7.9-6.8z"/><path fill="#34A853" d="M24 48c6.4 0 11.9-2.1 15.9-5.8l-7.1-5.5c-2 1.3-4.6 2.1-8.8 2.1-6.3 0-11.7-3.7-13.6-9.3l-7.9 6.8C6.4 42.6 14.6 48 24 48z"/></svg>
+          Entrar com Google
+        </button>
       </div>
     </div>
   )
