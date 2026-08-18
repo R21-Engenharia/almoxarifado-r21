@@ -4,6 +4,8 @@ import {
   type Item, type Material, type Movimento, type Obra, type Status, type EscritaItem,
 } from './api'
 import { supabase, authAtiva } from './supabase'
+import { Avatar, PerfilModal } from './PerfilCard'
+import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './perfil'
 
 type Aba = 'painel' | 'operar' | 'historico'
 
@@ -12,9 +14,15 @@ export default function App() {
   const [obra, setObra] = useState<string>('')
   const [modo, setModo] = useState<string>('')
   const [aba, setAba] = useState<Aba>('painel')
+  const [erroAcesso, setErroAcesso] = useState<string>('')
   // usuário: e-mail da sessão Supabase; em dev (sem auth) usa um rótulo fixo
   const [usuario, setUsuario] = useState<string | null>(authAtiva ? null : 'dev local')
   const [carregandoSessao, setCarregandoSessao] = useState<boolean>(authAtiva)
+  // perfil
+  const [perfil, setPerfil] = useState<Perfil | null>(null)
+  const [google, setGoogle] = useState<DadosGoogle>({ nome: '', foto: '', email: '' })
+  const [mostrarPerfil, setMostrarPerfil] = useState(false)
+  const [perfilObrigatorio, setPerfilObrigatorio] = useState(false)
 
   useEffect(() => {
     if (!authAtiva || !supabase) return
@@ -30,13 +38,22 @@ export default function App() {
   useEffect(() => {
     if (!usuario) return
     api.health().then(h => setModo(h.modo)).catch(() => setModo('offline'))
-    api.obras().then(os => { setObras(os); setObra(os[0]?.prevision_id || '') }).catch(() => {})
+    api.obras().then(os => { setObras(os); setObra(os[0]?.prevision_id || ''); setErroAcesso('') })
+      .catch(e => setErroAcesso(e instanceof Error ? e.message : String(e)))
+    if (authAtiva) {
+      Promise.all([carregarPerfil(), dadosDaSessao()]).then(([p, g]) => {
+        setPerfil(p); setGoogle(g)
+        if (!p || !p.nome) { setPerfilObrigatorio(true); setMostrarPerfil(true) }
+      })
+    }
   }, [usuario])
 
   if (carregandoSessao) return <div className="loading">Carregando…</div>
   if (!usuario) return <Login />
 
-  const sair = async () => { if (supabase) await supabase.auth.signOut(); setUsuario(null) }
+  const sair = async () => { if (supabase) await supabase.auth.signOut(); setUsuario(null); setPerfil(null) }
+  const nomeExibicao = perfil?.nome || google.nome || usuario
+  const fotoExibicao = perfil?.foto_url || google.foto || null
 
   return (
     <div className="app">
@@ -52,7 +69,11 @@ export default function App() {
           <select value={obra} onChange={e => setObra(e.target.value)} className="obra-sel">
             {obras.map(o => <option key={o.prevision_id} value={o.prevision_id}>{o.nome}</option>)}
           </select>
-          <button className="who" onClick={sair} title="sair">{usuario} ⏻</button>
+          <button className="perfil-btn" onClick={() => { setPerfilObrigatorio(false); setMostrarPerfil(true) }} title="meu perfil">
+            <Avatar url={fotoExibicao} nome={nomeExibicao} size={30} />
+            <span className="perfil-nome">{nomeExibicao}</span>
+          </button>
+          <button className="sair-btn" onClick={sair} title="sair">⏻</button>
         </div>
       </header>
 
@@ -60,6 +81,20 @@ export default function App() {
         <div className="demo-banner">
           Dados de demonstração. Configure as credenciais do Sienge no backend para usar dados reais.
         </div>
+      )}
+
+      {erroAcesso && (
+        <div className="demo-banner" style={{ borderColor: '#ef444455', color: '#fca5a5', background: '#ef44441a' }}>
+          Não foi possível carregar os dados: {erroAcesso}
+        </div>
+      )}
+
+      {mostrarPerfil && authAtiva && (
+        <PerfilModal
+          perfil={perfil} google={google} obrigatorio={perfilObrigatorio}
+          onSalvo={p => { setPerfil(p); setMostrarPerfil(false); setPerfilObrigatorio(false) }}
+          onFechar={() => setMostrarPerfil(false)}
+        />
       )}
 
       <nav className="tabs">

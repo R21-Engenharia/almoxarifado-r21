@@ -37,6 +37,25 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .who { background: var(--panel2); color: var(--muted); border: 1px solid var(--line);
   border-radius: 999px; padding: 8px 12px; font-size: 13px; }
 
+/* avatar + perfil */
+.avatar { border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle; }
+.avatar-ph { background: var(--accent); color: #fff; display: inline-flex; align-items: center;
+  justify-content: center; font-weight: 700; }
+.perfil-btn { display: flex; align-items: center; gap: 8px; background: var(--panel2);
+  color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px 5px 5px; }
+.perfil-nome { font-size: 13px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sair-btn { background: var(--panel2); color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; width: 34px; height: 34px; font-size: 15px; }
+.sair-btn:hover { color: var(--ruptura); }
+
+.perfil-foto { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 6px 0 18px; }
+.campo { display: block; margin-bottom: 14px; }
+.campo span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.campo input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 10px; padding: 11px 12px; }
+.campo input:focus { border-color: var(--accent); outline: none; }
+.campo-email { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 12px; }
+
 .demo-banner { background: #7c5b0f22; border: 1px solid #eab30855; color: #f3d27a;
   padding: 9px 12px; border-radius: 10px; font-size: 13px; margin-bottom: 10px; }
 
