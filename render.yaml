@@ -1,0 +1,23 @@
+# Backend do Almoxarifado R21 no Render (FastAPI). O frontend fica na Vercel.
+services:
+  - type: web
+    name: almoxarifado-r21-api
+    runtime: python
+    rootDir: backend
+    plan: starter        # o free hiberna e a 1a coleta (~1 min) pode expirar; starter evita isso
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: SIENGE_SUBDOMAIN
+        sync: false
+      - key: SIENGE_API_USER
+        sync: false
+      - key: SIENGE_API_PASSWORD
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: ALMOX_CORS_ORIGINS   # ex.: https://almoxarifado-r21.vercel.app
+        sync: false
