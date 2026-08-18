@@ -44,6 +44,14 @@ def _auth():
     return (user, pwd)
 
 
+def get_json(path: str, params: dict | None = None) -> dict:
+    """GET genérico autenticado (path começa com /). Retorna o JSON."""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.get(f"{_base_v1()}{path}", params=params or {})
+        r.raise_for_status()
+        return r.json()
+
+
 def coletar_movimentos(building_id: int, start_date: str | None = None,
                        end_date: str | None = None) -> list[dict]:
     """Puxa TODO o histórico de inventory-movements da obra (paginado)."""

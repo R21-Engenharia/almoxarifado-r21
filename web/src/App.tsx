@@ -7,15 +7,17 @@ import { supabase, authAtiva } from './supabase'
 import { Avatar, PerfilModal } from './PerfilCard'
 import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './perfil'
 import Financeiro from './Financeiro'
+import Posicao from './Posicao'
 import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
 
-type Secao = 'financeiro' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
+type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
   | 'equipamentos' | 'estoque' | 'operar' | 'historico'
 
 const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] }[] = [
   {
     grupo: 'Dashboards', itens: [
       { id: 'financeiro', icone: '💰', nome: 'Financeiro' },
+      { id: 'posicao', icone: '📋', nome: 'Posição por grupo' },
       { id: 'recebimentos', icone: '📥', nome: 'Recebimentos' },
       { id: 'consumo', icone: '📊', nome: 'Consumo' },
       { id: 'suprimentos', icone: '🧠', nome: 'Suprimentos' },
@@ -33,6 +35,7 @@ const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] 
 ]
 const TITULOS: Record<Secao, { t: string; s: string }> = {
   financeiro: { t: 'Financeiro', s: 'Capital em estoque, capital ocioso e fluxo de materiais' },
+  posicao: { t: 'Posição por grupo', s: 'Estoque atual consolidado pela classificação de insumos do Sienge' },
   recebimentos: { t: 'Recebimentos', s: 'Entregas, pedidos e notas fiscais' },
   consumo: { t: 'Consumo de materiais', s: 'Onde, com quem e em quê o material é gasto' },
   suprimentos: { t: 'Suprimentos (MRP)', s: 'Antecipe a ruptura antes de a frente parar' },
@@ -150,6 +153,7 @@ export default function App() {
 
         <main className="area">
           {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
+          {obra && secao === 'posicao' && <Posicao obra={obra} />}
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
           {obra && secao === 'historico' && <Historico obra={obra} />}

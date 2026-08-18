@@ -36,6 +36,7 @@ import supa
 import demo_data
 import engine
 import audit
+import grupos_sienge
 from obras import OBRAS, obra_ou_erro
 
 app = FastAPI(title="Almoxarifado R21 API")
@@ -217,6 +218,89 @@ def financeiro(obra: str = Query(...), meses: int = 12,
                usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
     return engine.financeiro(_movimentos(obra), hoje=date.today(), meses=meses)
+
+
+def _posicao(prevision_id: str, nivel: str, detalhe: bool):
+    """Consolida a posição de estoque atual por grupo/família REAL do Sienge."""
+    itens = _analise(prevision_id)["itens"]
+    grupos: dict[str, dict] = {}
+    total_valor = 0.0
+    sem_grupo = 0
+    for i in itens:
+        familia, grupo, cat = grupos_sienge.grupo_de(i["resource_id"])
+        chave = (familia if nivel == "familia" else grupo) or "(Sem grupo)"
+        if not (familia or grupo):
+            sem_grupo += 1
+        g = grupos.get(chave)
+        if g is None:
+            g = grupos[chave] = {
+                "grupo": chave, "categoria": cat, "familia": familia,
+                "n_insumos": 0, "valor_em_estoque": 0.0, "valor_parado": 0.0,
+                "n_parados": 0, "n_alertas": 0, "impacto_dia": 0.0, "itens": [] if detalhe else None,
+            }
+        g["n_insumos"] += 1
+        vs = i["valor_saldo"] if i["valor_saldo"] > 0 else 0
+        g["valor_em_estoque"] += vs
+        total_valor += vs
+        if i["status"] == "parado":
+            g["valor_parado"] += max(i["valor_saldo"], 0); g["n_parados"] += 1
+        if i["status"] in ("ruptura", "critico", "baixo"):
+            g["n_alertas"] += 1
+        g["impacto_dia"] += i["impacto_dia"]
+        if detalhe:
+            g["itens"].append({k: i[k] for k in ("resource_id", "descricao", "saldo",
+                              "unidade", "valor_saldo", "status", "cobertura_dias")})
+
+    lista = sorted(grupos.values(), key=lambda x: -x["valor_em_estoque"])
+    for g in lista:
+        g["valor_em_estoque"] = round(g["valor_em_estoque"], 2)
+        g["valor_parado"] = round(g["valor_parado"], 2)
+        g["impacto_dia"] = round(g["impacto_dia"], 2)
+        g["pct_do_total"] = round(g["valor_em_estoque"] / total_valor * 100, 1) if total_valor else 0
+    return {
+        "nivel": nivel, "hoje": date.today().isoformat(),
+        "mapa_ok": bool(grupos_sienge.carregar()),
+        "totais": {
+            "n_grupos": len(lista), "n_insumos": len(itens),
+            "valor_em_estoque": round(total_valor, 2),
+            "valor_parado": round(sum(g["valor_parado"] for g in lista), 2),
+            "sem_grupo": sem_grupo,
+        },
+        "grupos": lista,
+    }
+
+
+@app.get("/api/estoque/posicao")
+def posicao(obra: str = Query(...), nivel: str = "grupo", detalhe: bool = False,
+            usuario: str = Depends(usuario_logado)):
+    obra_ou_erro(obra)
+    if nivel not in ("grupo", "familia"):
+        nivel = "grupo"
+    return _posicao(obra, nivel, detalhe)
+
+
+_COLETA_GRUPOS = {"rodando": False, "n": 0}
+
+
+def _coletar_grupos_bg():
+    try:
+        _COLETA_GRUPOS["rodando"] = True
+        _COLETA_GRUPOS["n"] = grupos_sienge.coletar(sienge.get_json)
+        _ANALISE_CACHE.clear()
+    finally:
+        _COLETA_GRUPOS["rodando"] = False
+
+
+@app.post("/api/estoque/grupos/atualizar")
+def atualizar_grupos(usuario: str = Depends(usuario_logado)):
+    """Dispara a coleta do mapa insumo→grupo em segundo plano (~11 min: o Sienge
+    leva ~30s por página). Retorna na hora; o mapa atualiza quando terminar."""
+    if _modo_demo():
+        return {"ok": True, "n": 0, "modo": "demo"}
+    if not _COLETA_GRUPOS["rodando"]:
+        import threading
+        threading.Thread(target=_coletar_grupos_bg, daemon=True).start()
+    return {"ok": True, "rodando": True, "atual": len(grupos_sienge.carregar())}
 
 
 @app.get("/api/estoque/catalogo")

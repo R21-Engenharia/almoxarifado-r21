@@ -4,78 +4,88 @@ export interface SpecModulo {
   pergunta: string
   analisa: string[]
   decisao: string
+  diferencial: string
   requer: string
 }
 
+// Conteúdo autoral R21 — pensado do ponto de vista de suprimentos/compras.
+// A ideia não é repetir "dashboard bonito", é amarrar dado → decisão em R$,
+// com ligações que um painel genérico não faz (ex.: atraso de fornecedor vira
+// custo de estoque de segurança; prazo que vale é o da frente, não o do pedido).
 export const MODULOS: Record<string, SpecModulo> = {
   recebimentos: {
-    titulo: 'Recebimentos',
-    subtitulo: 'Cada entrega acompanhada do pedido à nota.',
-    pergunta: 'O que entrou, no prazo, e o que ainda está pendente ou atrasado?',
+    titulo: 'Recebimento & Conferência',
+    subtitulo: 'O que chegou tem que bater com o pedido, com a nota e com o físico.',
+    pergunta: 'O que chegou fecha com o pedido e a nota — e chegou antes de a frente precisar?',
     analisa: [
-      'Valor recebido no período e valor total recebido',
-      'Entregas no prazo, em percentual',
-      'Recebimentos por tipo: pedido, contrato, devolução, transferência',
-      'Cronograma de entregas com atrasadas e próximas dos 7 dias',
-      'Status dos pedidos e avaliação de recebimento (nota 0 a 5)',
+      'Conferência tripla na portaria: pedido × nota fiscal × quantidade física',
+      'Lead time real por fornecedor e por insumo (vira insumo do MRP)',
+      'Aderência à data de necessidade da obra — não só à data do pedido',
+      'Reajuste silencioso: divergência de preço entre pedido e nota',
+      'Fila de recebimentos pendentes/atrasados com o valor em risco',
     ],
-    decisao: 'Cobrar o fornecedor com dado, conciliar a nota fiscal e nunca ser surpreendido por uma entrega atrasada.',
+    decisao: 'Barrar a divergência na portaria e não pagar nota que não bate com o físico.',
+    diferencial: 'O prazo que importa não é o do pedido — é o dia em que a frente ia usar o material. Cruzamos os dois; um painel comum só olha o pedido.',
     requer: 'integração de pedidos de compra e notas fiscais do Sienge',
   },
   consumo: {
-    titulo: 'Consumo de materiais',
-    subtitulo: 'Onde, com quem e em quê o material é gasto.',
-    pergunta: 'Para onde está indo o meu material, e o meu estoque atual dura quanto tempo?',
+    titulo: 'Consumo & Desperdício',
+    subtitulo: 'Para onde o material vai de verdade — e quanto disso vira perda.',
+    pergunta: 'Qual frente está consumindo, no ritmo de quê, e quanto foge do orçado?',
     analisa: [
-      'Consumo no período, com comparação e tendência',
-      'Saldo de estoque traduzido em meses de cobertura',
-      'Consumo por local, funcionário, categoria e material',
-      'Requisições atendidas e movimentação de material',
-      'Alerta de estoque mínimo e custo de reposição',
+      'Consumo por subetapa/frente, capturado na baixa pelo nosso app',
+      'Consumo real × orçado por insumo: índice de desperdício por frente',
+      'Cobertura traduzida em dias de obra que o estoque atual aguenta',
+      'Ritmo de consumo (tendência) para dimensionar a próxima compra',
+      'Insumo saindo mais rápido que o previsto — alerta de perda/furto',
     ],
-    decisao: 'Enxergar desperdício por frente e dimensionar a compra pelo consumo real, não pela média grosseira.',
-    requer: 'apropriação por subetapa na baixa (para consumo por local/funcionário)',
+    decisao: 'Dimensionar a compra pelo ritmo real e cobrar a frente que estoura o orçado.',
+    diferencial: 'Apropriação por subetapa que o próprio ERP não entrega — porque capturamos no momento da baixa, dentro do app, e guardamos do nosso lado.',
+    requer: 'apropriação por subetapa na baixa (nosso app) + orçado por insumo',
   },
   suprimentos: {
-    titulo: 'Suprimentos (MRP)',
-    subtitulo: 'Antecipe a ruptura antes de a frente parar.',
-    pergunta: 'O que vai me faltar nos próximos dias e quais frentes de obra isso trava?',
+    titulo: 'Suprimentos — MRP preditivo',
+    subtitulo: 'Comprar na hora certa é otimizar dois custos opostos, não seguir estoque mínimo.',
+    pergunta: 'Até que dia dá pra comprar cada insumo sem parar a obra e sem imobilizar capital à toa?',
     analisa: [
-      'Insumos em risco no horizonte de 7 a 120 dias',
-      'Atividades do cronograma com restrição de material',
-      'Saúde do abastecimento, de 0 a 100',
-      'Capital em risco de falta e capital parado em excesso',
-      'Ponto de pedido: até quando dá para comprar sem faltar',
+      'Projeção de consumo a partir do histórico de baixas + cronograma da obra',
+      'Ponto de pedido por insumo, já com o lead time real do fornecedor',
+      'Lista pronta: "comprar até o dia X, quantidade Y"',
+      'Trade-off em R$: custo de faltar (obra parada) × custo de comprar cedo (capital + Selic)',
+      'Estoque de segurança ajustado pela confiabilidade do fornecedor',
     ],
-    decisao: 'Comprar na hora certa, na quantidade certa, sem parar a obra e sem inflar o estoque.',
-    requer: 'pedidos de compra + Forecast Engine (previsão de consumo)',
+    decisao: 'Comprar no ponto ótimo entre risco de parar a obra e capital preso no galpão.',
+    diferencial: 'Não é alerta de estoque mínimo. É otimização do trade-off faltar × imobilizar, medido em reais — e o buffer se ajusta a quem costuma atrasar.',
+    requer: 'pedidos de compra + Forecast Engine + score de fornecedor',
   },
   fornecedores: {
-    titulo: 'Fornecedores',
-    subtitulo: 'Compre de quem entrega.',
-    pergunta: 'Em quem posso confiar minha próxima compra?',
+    titulo: 'Fornecedores — scorecard',
+    subtitulo: 'Quem entrega define quanto estoque extra você é obrigado a carregar.',
+    pergunta: 'Em quem confio a próxima compra — e quanto de buffer cada fornecedor me custa?',
     analisa: [
-      'Total de fornecedores ativos e inativos',
-      'Entregas no prazo (%), comparadas ao mês anterior',
-      'Valor total de compras por fornecedor',
-      'Qualidade dos produtos: taxa de aprovação nas inspeções',
-      'Nota média de 0 a 5 e ranking de fornecedores',
+      'OTIF: entregou no prazo E completo (não só "no prazo")',
+      'Desvio de preço vs. histórico e vs. outras cotações',
+      'Taxa de reprovação na conferência (qualidade real)',
+      'Score de confiança 0–100 por fornecedor',
+      'Impacto no estoque de segurança: quem atrasa, custa buffer',
     ],
-    decisao: 'Negociar com quem tem histórico, homologar melhor e descredenciar quem atrasa e reprova.',
-    requer: 'integração de compras e cadastro de fornecedores do Sienge',
+    decisao: 'Homologar quem entrega, descredenciar quem atrasa e ajustar o buffer por confiança.',
+    diferencial: 'Ligamos a reputação do fornecedor ao estoque de segurança do MRP: atraso deixa de ser reclamação e vira custo de capital medido em R$.',
+    requer: 'compras + cadastro de fornecedores do Sienge',
   },
   equipamentos: {
-    titulo: 'Equipamentos',
-    subtitulo: 'O que está locado, onde e por quanto.',
-    pergunta: 'Quais equipamentos estão na obra, ociosos ou custando mais do que deveriam?',
+    titulo: 'Equipamentos & Locação',
+    subtitulo: 'Equipamento parado com contrato aberto é dinheiro sangrando em silêncio.',
+    pergunta: 'Qual equipamento está locado e parado hoje — e quanto isso custa até a devolução?',
     analisa: [
-      'Equipamentos por obra e status de uso',
-      'Custo de locação por período',
-      'Ociosidade e utilização',
-      'Contratos e prazos de devolução',
+      'Equipamentos locados por obra e status de uso',
+      'Dias ocioso cruzado com o cronograma (locado, mas sem frente que o use)',
+      'Custo de locação acumulado e projeção até a devolução',
+      'Contrato vencendo e renovação cara em destaque',
     ],
-    decisao: 'Devolver o que está parado e renegociar locação cara.',
-    requer: 'verificar exposição de equipamentos/locação na API do Sienge',
+    decisao: 'Devolver o que está parado hoje e renegociar locação longa e cara.',
+    diferencial: 'Cruzamos a ociosidade com o cronograma — mostramos o que está parado de verdade, não o que está parado "no papel".',
+    requer: 'verificar exposição de locação/equipamentos na API do Sienge',
   },
 }
 
@@ -93,7 +103,7 @@ export default function ModuloEmBreve({ spec }: { spec: SpecModulo }) {
       </div>
 
       <div className="embreve">
-        <div className="embreve-badge">Em breve</div>
+        <div className="embreve-badge">Em construção</div>
         <h2>{spec.titulo}</h2>
         <p className="embreve-sub">{spec.subtitulo}</p>
         <blockquote>“{spec.pergunta}”</blockquote>
@@ -102,10 +112,16 @@ export default function ModuloEmBreve({ spec }: { spec: SpecModulo }) {
             <div className="embreve-label">O que você vai analisar</div>
             <ul>{spec.analisa.map((a, i) => <li key={i}>{a}</li>)}</ul>
           </div>
-          <div className="embreve-decisao">
-            <div className="embreve-label green">Decisão que habilita</div>
-            <p>{spec.decisao}</p>
-            <div className="embreve-requer">Requer: {spec.requer}</div>
+          <div>
+            <div className="embreve-decisao">
+              <div className="embreve-label green">Decisão que habilita</div>
+              <p>{spec.decisao}</p>
+            </div>
+            <div className="embreve-dif">
+              <div className="embreve-label">◆ Nosso diferencial</div>
+              <p>{spec.diferencial}</p>
+            </div>
+            <div className="embreve-requer">Falta integrar: {spec.requer}</div>
           </div>
         </div>
       </div>

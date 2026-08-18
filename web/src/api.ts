@@ -8,6 +8,22 @@ export interface FinanceiroKpis {
 }
 export interface Financeiro { hoje: string; kpis: FinanceiroKpis; fluxo: FluxoMes[] }
 
+export interface GrupoItem {
+  resource_id: string; descricao: string; saldo: number; unidade: string
+  valor_saldo: number; status: Status; cobertura_dias: number | null
+}
+export interface GrupoPos {
+  grupo: string; categoria: string; familia: string
+  n_insumos: number; valor_em_estoque: number; valor_parado: number
+  n_parados: number; n_alertas: number; impacto_dia: number; pct_do_total: number
+  itens?: GrupoItem[] | null
+}
+export interface Posicao {
+  nivel: string; hoje: string; mapa_ok: boolean
+  totais: { n_grupos: number; n_insumos: number; valor_em_estoque: number; valor_parado: number; sem_grupo: number }
+  grupos: GrupoPos[]
+}
+
 export interface Item {
   resource_id: string
   descricao: string
@@ -100,6 +116,10 @@ export const api = {
     req<Material>(`/api/estoque/material?obra=${obra}&janela_dias=${janela}`),
   financeiro: (obra: string, meses = 12) =>
     req<Financeiro>(`/api/estoque/financeiro?obra=${obra}&meses=${meses}`),
+  posicao: (obra: string, nivel: 'grupo' | 'familia' = 'grupo', detalhe = false) =>
+    req<Posicao>(`/api/estoque/posicao?obra=${obra}&nivel=${nivel}&detalhe=${detalhe}`),
+  atualizarGrupos: () =>
+    req<{ ok: boolean; rodando?: boolean; atual?: number; n?: number }>(`/api/estoque/grupos/atualizar`, { method: 'POST' }),
   catalogo: (obra: string) =>
     req<{ itens: Item[]; macro_ordem: string[] }>(`/api/estoque/catalogo?obra=${obra}`),
   insumos: (obra: string, q: string) =>

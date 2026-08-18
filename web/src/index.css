@@ -89,6 +89,20 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .legenda .dot-a { background: var(--entrada); }
 .legenda .dot-b { background: var(--saida); }
 
+/* tabela de posição por grupo */
+.chart-card .tbl { min-width: 720px; }
+.tbl th.ord { cursor: pointer; user-select: none; white-space: nowrap; }
+.tbl th.ord:hover { color: var(--text); }
+.tbl th.ord.on { color: var(--accent); }
+.cat-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  padding: 2px 8px; border-radius: 999px; background: var(--panel2); color: var(--muted); }
+.barra-pct { display: inline-block; width: 60px; height: 6px; background: var(--line); border-radius: 3px;
+  overflow: hidden; margin-right: 8px; vertical-align: middle; }
+.barra-pct span { display: block; height: 100%; background: var(--accent); }
+.chart-ctrls .mini { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 9px; padding: 7px 12px; font-size: 12.5px; }
+.chart-ctrls .mini:hover { border-color: var(--accent); }
+
 /* ===================== módulo "em breve" ===================== */
 .kpi-card.skeleton { opacity: .55; }
 .sk-bar { background: linear-gradient(90deg, #ffffff10, #ffffff20, #ffffff10); border-radius: 6px; height: 26px; margin-top: 6px; }
@@ -105,9 +119,11 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .embreve-label.green { color: var(--entrada); }
 .embreve ul { margin: 0; padding-left: 18px; }
 .embreve li { margin-bottom: 8px; font-size: 14px; }
-.embreve-decisao { background: var(--sidebar); border: 1px solid var(--line); border-radius: 12px; padding: 16px; align-self: start; }
-.embreve-decisao p { margin: 0 0 12px; font-size: 14px; }
-.embreve-requer { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
+.embreve-decisao { background: var(--sidebar); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.embreve-decisao p { margin: 0; font-size: 14px; }
+.embreve-dif { background: #2dd4bf12; border: 1px solid #2dd4bf40; border-radius: 12px; padding: 16px; margin-top: 12px; }
+.embreve-dif p { margin: 0; font-size: 14px; }
+.embreve-requer { font-size: 12px; color: var(--muted); margin-top: 12px; }
 
 /* mobile: sidebar vira gaveta */
 @media (max-width: 900px) {
