@@ -212,6 +212,13 @@ def material(obra: str = Query(...), janela_dias: int = 90,
     return _analise(obra, janela_dias)
 
 
+@app.get("/api/estoque/financeiro")
+def financeiro(obra: str = Query(...), meses: int = 12,
+               usuario: str = Depends(usuario_logado)):
+    obra_ou_erro(obra)
+    return engine.financeiro(_movimentos(obra), hoje=date.today(), meses=meses)
+
+
 @app.get("/api/estoque/catalogo")
 def catalogo(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)

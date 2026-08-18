@@ -1,5 +1,13 @@
 export type Status = 'ruptura' | 'critico' | 'baixo' | 'ok' | 'parado'
 
+export interface FluxoMes { mes: string; entradas: number; saidas: number }
+export interface FinanceiroKpis {
+  capital_em_estoque: number; capital_ocioso: number; selic_mensal: number
+  selic_anual_pct: number; estoque_consumido_pct: number; ociosidade_media_dias: number
+  n_insumos: number; n_parados: number
+}
+export interface Financeiro { hoje: string; kpis: FinanceiroKpis; fluxo: FluxoMes[] }
+
 export interface Item {
   resource_id: string
   descricao: string
@@ -90,6 +98,8 @@ export const api = {
   obras: () => req<Obra[]>('/api/obras'),
   material: (obra: string, janela = 90) =>
     req<Material>(`/api/estoque/material?obra=${obra}&janela_dias=${janela}`),
+  financeiro: (obra: string, meses = 12) =>
+    req<Financeiro>(`/api/estoque/financeiro?obra=${obra}&meses=${meses}`),
   catalogo: (obra: string) =>
     req<{ itens: Item[]; macro_ordem: string[] }>(`/api/estoque/catalogo?obra=${obra}`),
   insumos: (obra: string, q: string) =>

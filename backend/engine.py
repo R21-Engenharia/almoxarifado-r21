@@ -16,6 +16,7 @@ JANELA_PADRAO = 90          # dias para taxa de consumo
 CRITICO_DIAS = 7
 BAIXO_DIAS = 15
 PARADO_DIAS = 120           # sem consumo há >= isto -> capital parado
+SELIC_ANUAL = 0.15          # taxa p/ custo de oportunidade do capital parado
 
 ORDEM_STATUS = {"ruptura": 0, "critico": 1, "baixo": 2, "ok": 3, "parado": 4}
 
@@ -214,4 +215,74 @@ def analisar(movimentos: list[dict], hoje: date | None = None,
         "alertas": alertas[:top] if top else alertas,
         "parados": parados[:top] if top else parados,
         "itens": itens,
+    }
+
+
+def _ultimos_meses(hoje: date, n: int) -> list[str]:
+    seq = []
+    for i in range(n - 1, -1, -1):
+        yy, mm = hoje.year, hoje.month - i
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        seq.append(f"{yy:04d}-{mm:02d}")
+    return seq
+
+
+def financeiro(movimentos: list[dict], hoje: date | None = None, meses: int = 12) -> dict:
+    """Módulo Financeiro: KPIs (capital em estoque, capital ocioso + custo Selic,
+    % consumido, ociosidade média) + fluxo mensal Entradas×Saídas (em R$)."""
+    hoje = hoje or date.today()
+    ag = agregar(movimentos)
+
+    # fluxo mensal (valor movimentado por mês)
+    entradas: dict[str, float] = defaultdict(float)
+    saidas: dict[str, float] = defaultdict(float)
+    for m in movimentos:
+        dt = _parse_data(m.get("movementDate"))
+        if not dt:
+            continue
+        val = float(m.get("movementQuantity") or 0) * float(m.get("movementValue") or 0)
+        mes = dt.strftime("%Y-%m")
+        if (m.get("inputOutput") or "").upper() == "INPUT":
+            entradas[mes] += val
+        else:
+            saidas[mes] += val
+    seq = _ultimos_meses(hoje, meses)
+    fluxo = [{"mes": k, "entradas": round(entradas.get(k, 0.0), 2),
+              "saidas": round(saidas.get(k, 0.0), 2)} for k in seq]
+
+    est = analisar(movimentos, hoje=hoje)
+    itens = est["itens"]
+
+    total_entrada_val = sum(a["valor_entrada"] for a in ag.values())
+    total_consumo_val = 0.0
+    for a in ag.values():
+        custo = (a["valor_entrada"] / a["entrada_qtd"]) if a["entrada_qtd"] else 0.0
+        total_consumo_val += a["consumo_qtd"] * custo
+    consumido_pct = (total_consumo_val / total_entrada_val * 100) if total_entrada_val else 0.0
+
+    # ociosidade média (dias sem consumo) sobre itens com saldo positivo
+    dias = []
+    for i in itens:
+        if i["saldo"] > 0:
+            ref = i["ultimo_consumo"] or i["ultimo_mov"]
+            if ref:
+                dias.append((hoje - date.fromisoformat(ref)).days)
+    ociosidade = round(sum(dias) / len(dias)) if dias else 0
+
+    capital_ocioso = est["kpis"]["valor_parado"]
+    return {
+        "hoje": hoje.isoformat(),
+        "kpis": {
+            "capital_em_estoque": est["kpis"]["valor_em_estoque"],
+            "capital_ocioso": capital_ocioso,
+            "selic_mensal": round(capital_ocioso * (SELIC_ANUAL / 12), 2),
+            "selic_anual_pct": round(SELIC_ANUAL * 100, 2),
+            "estoque_consumido_pct": round(consumido_pct, 2),
+            "ociosidade_media_dias": ociosidade,
+            "n_insumos": est["kpis"]["n_insumos"],
+            "n_parados": est["kpis"]["resumo_status"].get("parado", 0),
+        },
+        "fluxo": fluxo,
     }

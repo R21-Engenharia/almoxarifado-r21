@@ -6,14 +6,49 @@ import {
 import { supabase, authAtiva } from './supabase'
 import { Avatar, PerfilModal } from './PerfilCard'
 import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './perfil'
+import Financeiro from './Financeiro'
+import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
 
-type Aba = 'painel' | 'operar' | 'historico'
+type Secao = 'financeiro' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
+  | 'equipamentos' | 'estoque' | 'operar' | 'historico'
+
+const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] }[] = [
+  {
+    grupo: 'Dashboards', itens: [
+      { id: 'financeiro', icone: '💰', nome: 'Financeiro' },
+      { id: 'recebimentos', icone: '📥', nome: 'Recebimentos' },
+      { id: 'consumo', icone: '📊', nome: 'Consumo' },
+      { id: 'suprimentos', icone: '🧠', nome: 'Suprimentos' },
+      { id: 'fornecedores', icone: '🤝', nome: 'Fornecedores' },
+      { id: 'equipamentos', icone: '🔧', nome: 'Equipamentos' },
+    ],
+  },
+  {
+    grupo: 'Almoxarifado', itens: [
+      { id: 'estoque', icone: '📦', nome: 'Estoque' },
+      { id: 'operar', icone: '✍️', nome: 'Operar' },
+      { id: 'historico', icone: '🕘', nome: 'Histórico' },
+    ],
+  },
+]
+const TITULOS: Record<Secao, { t: string; s: string }> = {
+  financeiro: { t: 'Financeiro', s: 'Capital em estoque, capital ocioso e fluxo de materiais' },
+  recebimentos: { t: 'Recebimentos', s: 'Entregas, pedidos e notas fiscais' },
+  consumo: { t: 'Consumo de materiais', s: 'Onde, com quem e em quê o material é gasto' },
+  suprimentos: { t: 'Suprimentos (MRP)', s: 'Antecipe a ruptura antes de a frente parar' },
+  fornecedores: { t: 'Fornecedores', s: 'Quem entrega no prazo e com qualidade' },
+  equipamentos: { t: 'Equipamentos', s: 'Locação, ociosidade e custo' },
+  estoque: { t: 'Estoque', s: 'Risco de ruptura e capital parado' },
+  operar: { t: 'Operar almoxarifado', s: 'Baixa, entrada e ajustes no Sienge' },
+  historico: { t: 'Histórico', s: 'Movimentações registradas pelo app' },
+}
 
 export default function App() {
   const [obras, setObras] = useState<Obra[]>([])
   const [obra, setObra] = useState<string>('')
   const [modo, setModo] = useState<string>('')
-  const [aba, setAba] = useState<Aba>('painel')
+  const [secao, setSecao] = useState<Secao>('financeiro')
+  const [menuAberto, setMenuAberto] = useState(false)
   const [erroAcesso, setErroAcesso] = useState<string>('')
   // usuário: e-mail da sessão Supabase; em dev (sem auth) usa um rótulo fixo
   const [usuario, setUsuario] = useState<string | null>(authAtiva ? null : 'dev local')
@@ -55,59 +90,73 @@ export default function App() {
   const nomeExibicao = perfil?.nome || google.nome || usuario
   const fotoExibicao = perfil?.foto_url || google.foto || null
 
+  const irPara = (s: Secao) => { setSecao(s); setMenuAberto(false) }
+
   return (
-    <div className="app">
-      <header className="top">
-        <div className="brand">
-          <span className="logo">📦</span>
-          <div>
-            <div className="tt">Almoxarifado R21</div>
-            <div className="sub">{modo === 'demo' ? 'MODO DEMONSTRAÇÃO' : 'Sienge · dados reais'}</div>
+    <div className={`plataforma ${menuAberto ? 'menu-aberto' : ''}`}>
+      <aside className="side">
+        <div className="side-logo"><span className="logo">📦</span><span className="side-tt">R21</span></div>
+        <nav className="side-nav">
+          {NAV.map(g => (
+            <div className="side-grupo" key={g.grupo}>
+              <div className="side-grupo-tt">{g.grupo}</div>
+              {g.itens.map(it => (
+                <button key={it.id} className={`side-item ${secao === it.id ? 'on' : ''}`} onClick={() => irPara(it.id)}>
+                  <span className="side-ic">{it.icone}</span><span className="side-nome">{it.nome}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+        <button className="side-perfil" onClick={() => { setPerfilObrigatorio(false); setMostrarPerfil(true) }}>
+          <Avatar url={fotoExibicao} nome={nomeExibicao} size={30} />
+          <span className="side-nome">{nomeExibicao}</span>
+        </button>
+      </aside>
+
+      {menuAberto && <div className="side-overlay" onClick={() => setMenuAberto(false)} />}
+
+      <div className="conteudo">
+        <header className="topbar">
+          <div className="topbar-l">
+            <button className="hamburguer" onClick={() => setMenuAberto(true)} aria-label="menu">☰</button>
+            <div>
+              <div className="topbar-tt">{TITULOS[secao].t}</div>
+              <div className="topbar-sub">{TITULOS[secao].s}</div>
+            </div>
           </div>
-        </div>
-        <div className="topr">
-          <select value={obra} onChange={e => setObra(e.target.value)} className="obra-sel">
-            {obras.map(o => <option key={o.prevision_id} value={o.prevision_id}>{o.nome}</option>)}
-          </select>
-          <button className="perfil-btn" onClick={() => { setPerfilObrigatorio(false); setMostrarPerfil(true) }} title="meu perfil">
-            <Avatar url={fotoExibicao} nome={nomeExibicao} size={30} />
-            <span className="perfil-nome">{nomeExibicao}</span>
-          </button>
-          <button className="sair-btn" onClick={sair} title="sair">⏻</button>
-        </div>
-      </header>
+          <div className="topbar-r">
+            <span className={`selo ${modo === 'demo' ? 'demo' : 'ok'}`}>{modo === 'demo' ? 'Demonstração' : 'Sienge · ao vivo'}</span>
+            <select value={obra} onChange={e => setObra(e.target.value)} className="obra-sel">
+              {obras.map(o => <option key={o.prevision_id} value={o.prevision_id}>{o.nome}</option>)}
+            </select>
+            <button className="sair-btn" onClick={sair} title="sair">⏻</button>
+          </div>
+        </header>
 
-      {modo === 'demo' && (
-        <div className="demo-banner">
-          Dados de demonstração. Configure as credenciais do Sienge no backend para usar dados reais.
-        </div>
-      )}
+        {erroAcesso && (
+          <div className="demo-banner" style={{ borderColor: '#ef444455', color: '#fca5a5', background: '#ef44441a', margin: '0 20px' }}>
+            Não foi possível carregar os dados: {erroAcesso}
+          </div>
+        )}
 
-      {erroAcesso && (
-        <div className="demo-banner" style={{ borderColor: '#ef444455', color: '#fca5a5', background: '#ef44441a' }}>
-          Não foi possível carregar os dados: {erroAcesso}
-        </div>
-      )}
+        {mostrarPerfil && authAtiva && (
+          <PerfilModal
+            perfil={perfil} google={google} obrigatorio={perfilObrigatorio}
+            onSalvo={p => { setPerfil(p); setMostrarPerfil(false); setPerfilObrigatorio(false) }}
+            onFechar={() => setMostrarPerfil(false)}
+          />
+        )}
 
-      {mostrarPerfil && authAtiva && (
-        <PerfilModal
-          perfil={perfil} google={google} obrigatorio={perfilObrigatorio}
-          onSalvo={p => { setPerfil(p); setMostrarPerfil(false); setPerfilObrigatorio(false) }}
-          onFechar={() => setMostrarPerfil(false)}
-        />
-      )}
-
-      <nav className="tabs">
-        <button className={aba === 'painel' ? 'on' : ''} onClick={() => setAba('painel')}>Painel</button>
-        <button className={aba === 'operar' ? 'on' : ''} onClick={() => setAba('operar')}>Operar almoxarifado</button>
-        <button className={aba === 'historico' ? 'on' : ''} onClick={() => setAba('historico')}>Histórico</button>
-      </nav>
-
-      <main>
-        {obra && aba === 'painel' && <Painel obra={obra} />}
-        {obra && aba === 'operar' && <Operar obra={obra} />}
-        {obra && aba === 'historico' && <Historico obra={obra} />}
-      </main>
+        <main className="area">
+          {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
+          {obra && secao === 'estoque' && <Painel obra={obra} />}
+          {obra && secao === 'operar' && <Operar obra={obra} />}
+          {obra && secao === 'historico' && <Historico obra={obra} />}
+          {['recebimentos', 'consumo', 'suprimentos', 'fornecedores', 'equipamentos'].includes(secao) &&
+            <ModuloEmBreve spec={MODULOS[secao]} />}
+        </main>
+      </div>
     </div>
   )
 }
