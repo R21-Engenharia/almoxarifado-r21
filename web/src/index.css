@@ -34,10 +34,9 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .side-logo { padding: 6px 6px 16px; }
 .side-brand { width: 100%; max-width: 200px; height: auto; display: block; border-radius: 8px; }
 .side-tt { font-weight: 800; letter-spacing: .04em; }
-.side-r21 { display: flex; align-items: center; gap: 8px; padding: 12px 6px 2px; margin-top: 10px;
-  border-top: 1px solid var(--line); }
-.side-r21 img { height: 20px; width: auto; }
-.side-r21 span { font-size: 10.5px; color: var(--muted); letter-spacing: .02em; }
+.side-r21 { display: flex; align-items: center; justify-content: center; padding: 14px 6px 4px;
+  margin-top: 10px; border-top: 1px solid var(--line); }
+.side-r21 img { height: 26px; width: auto; }
 .side-nav { flex: 1; overflow-y: auto; }
 .side-grupo { margin-bottom: 16px; }
 .side-grupo-tt { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);

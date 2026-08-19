@@ -118,7 +118,6 @@ export default function App() {
         </button>
         <div className="side-r21">
           <img src="/r21.png" alt="R21 Engenharia" />
-          <span>uma solução R21</span>
         </div>
       </aside>
 
