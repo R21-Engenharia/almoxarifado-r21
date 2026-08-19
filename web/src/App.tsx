@@ -99,7 +99,7 @@ export default function App() {
   return (
     <div className={`plataforma ${menuAberto ? 'menu-aberto' : ''}`}>
       <aside className="side">
-        <div className="side-logo"><span className="logo">📦</span><span className="side-tt">R21</span></div>
+        <div className="side-logo"><img src="/box21.png" alt="BOX21" className="side-brand" /></div>
         <nav className="side-nav">
           {NAV.map(g => (
             <div className="side-grupo" key={g.grupo}>
@@ -116,6 +116,10 @@ export default function App() {
           <Avatar url={fotoExibicao} nome={nomeExibicao} size={30} />
           <span className="side-nome">{nomeExibicao}</span>
         </button>
+        <div className="side-r21">
+          <img src="/r21.png" alt="R21 Engenharia" />
+          <span>uma solução R21</span>
+        </div>
       </aside>
 
       {menuAberto && <div className="side-overlay" onClick={() => setMenuAberto(false)} />}
@@ -194,8 +198,8 @@ function Login() {
   return (
     <div className="ident">
       <div className="ident-card">
-        <div className="logo big">📦</div>
-        <h1>Almoxarifado R21</h1>
+        <img src="/box21.png" alt="BOX21" className="ident-logo" />
+        <p className="ident-tag">Inteligência de estoque · R21 Engenharia</p>
         <p>Entre com seu e-mail e senha autorizados.</p>
         <input type="email" placeholder="e-mail" value={email} autoFocus
           onChange={e => setEmail(e.target.value)} />
