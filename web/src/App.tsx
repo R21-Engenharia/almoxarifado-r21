@@ -8,6 +8,7 @@ import { Avatar, PerfilModal } from './PerfilCard'
 import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './perfil'
 import Financeiro from './Financeiro'
 import Posicao from './Posicao'
+import Consumo from './Consumo'
 import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
 
 type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
@@ -154,10 +155,11 @@ export default function App() {
         <main className="area">
           {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
           {obra && secao === 'posicao' && <Posicao obra={obra} />}
+          {obra && secao === 'consumo' && <Consumo obra={obra} />}
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
           {obra && secao === 'historico' && <Historico obra={obra} />}
-          {['recebimentos', 'consumo', 'suprimentos', 'fornecedores', 'equipamentos'].includes(secao) &&
+          {['recebimentos', 'suprimentos', 'fornecedores', 'equipamentos'].includes(secao) &&
             <ModuloEmBreve spec={MODULOS[secao]} />}
         </main>
       </div>

@@ -220,6 +220,13 @@ def financeiro(obra: str = Query(...), meses: int = 12,
     return engine.financeiro(_movimentos(obra), hoje=date.today(), meses=meses)
 
 
+@app.get("/api/estoque/consumo")
+def consumo(obra: str = Query(...), meses: int = 12,
+            usuario: str = Depends(usuario_logado)):
+    obra_ou_erro(obra)
+    return engine.consumo(_movimentos(obra), hoje=date.today(), meses=meses)
+
+
 def _posicao(prevision_id: str, nivel: str, detalhe: bool):
     """Consolida a posição de estoque atual por grupo/família REAL do Sienge."""
     itens = _analise(prevision_id)["itens"]

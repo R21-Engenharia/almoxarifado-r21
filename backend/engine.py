@@ -286,3 +286,57 @@ def financeiro(movimentos: list[dict], hoje: date | None = None, meses: int = 12
         },
         "fluxo": fluxo,
     }
+
+
+def consumo(movimentos: list[dict], hoje: date | None = None, meses: int = 12) -> dict:
+    """Módulo Consumo: série mensal de consumo (R$, só tipo Consumo), KPIs de
+    ritmo/tendência e ranking dos insumos que mais consomem capital."""
+    hoje = hoje or date.today()
+    ag = agregar(movimentos)
+    seq = _ultimos_meses(hoje, meses)
+    serie = {k: 0.0 for k in seq}
+
+    itens = []
+    for rid, a in ag.items():
+        if a["consumo_qtd"] <= 0:
+            continue
+        custo = (a["valor_entrada"] / a["entrada_qtd"]) if a["entrada_qtd"] else 0.0
+        consumo_periodo = 0.0
+        for mes, q in a["consumo_mensal"].items():
+            if mes in serie:
+                serie[mes] += q * custo
+                consumo_periodo += q * custo
+        cd = _consumo_dia(a, hoje, 90)
+        saldo = a["entrada_qtd"] - a["saida_qtd"]
+        cobertura = (saldo / cd) if cd > 0 else None
+        itens.append({
+            "resource_id": rid, "descricao": a["descricao"],
+            "unidade": next(iter(a["unidades"]), ""),
+            "consumo_periodo": round(consumo_periodo, 2),
+            "consumo_dia_valor": round(cd * custo, 2),
+            "consumo_qtd": round(a["consumo_qtd"], 2),
+            "cobertura_dias": round(cobertura, 1) if cobertura is not None else None,
+            "saldo": round(saldo, 2),
+            "ultimo_consumo": a["ultimo_consumo"].isoformat() if a["ultimo_consumo"] else None,
+        })
+
+    itens.sort(key=lambda x: -x["consumo_periodo"])
+    serie_list = [{"mes": k, "consumo": round(serie[k], 2)} for k in seq]
+    total = sum(serie.values())
+    mes_atual = serie[seq[-1]] if seq else 0.0
+    tendencia = None
+    if len(seq) >= 2 and serie[seq[-2]] > 0:
+        tendencia = round((serie[seq[-1]] - serie[seq[-2]]) / serie[seq[-2]] * 100, 1)
+    return {
+        "hoje": hoje.isoformat(),
+        "kpis": {
+            "consumo_mes": round(mes_atual, 2),
+            "consumo_medio_mes": round(total / len(seq), 2) if seq else 0,
+            "consumo_total_periodo": round(total, 2),
+            "tendencia_pct": tendencia,
+            "n_ativos": len(itens),
+            "meses": len(seq),
+        },
+        "serie": serie_list,
+        "top": itens[:50],
+    }

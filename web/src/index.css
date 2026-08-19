@@ -84,6 +84,7 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .chart-svg .axis { fill: var(--muted); font-size: 11px; }
 .chart-svg .bar-a { fill: var(--entrada); }
 .chart-svg .bar-b { fill: var(--saida); }
+.chart-svg .linha { fill: none; stroke: var(--entrada); stroke-width: 2; }
 .legenda { display: flex; gap: 18px; justify-content: center; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
 .legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
 .legenda .dot-a { background: var(--entrada); }

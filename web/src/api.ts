@@ -8,6 +8,18 @@ export interface FinanceiroKpis {
 }
 export interface Financeiro { hoje: string; kpis: FinanceiroKpis; fluxo: FluxoMes[] }
 
+export interface ConsumoMes { mes: string; consumo: number }
+export interface ConsumoItem {
+  resource_id: string; descricao: string; unidade: string
+  consumo_periodo: number; consumo_dia_valor: number; consumo_qtd: number
+  cobertura_dias: number | null; saldo: number; ultimo_consumo: string | null
+}
+export interface ConsumoKpis {
+  consumo_mes: number; consumo_medio_mes: number; consumo_total_periodo: number
+  tendencia_pct: number | null; n_ativos: number; meses: number
+}
+export interface ConsumoData { hoje: string; kpis: ConsumoKpis; serie: ConsumoMes[]; top: ConsumoItem[] }
+
 export interface GrupoItem {
   resource_id: string; descricao: string; saldo: number; unidade: string
   valor_saldo: number; status: Status; cobertura_dias: number | null
@@ -116,6 +128,8 @@ export const api = {
     req<Material>(`/api/estoque/material?obra=${obra}&janela_dias=${janela}`),
   financeiro: (obra: string, meses = 12) =>
     req<Financeiro>(`/api/estoque/financeiro?obra=${obra}&meses=${meses}`),
+  consumo: (obra: string, meses = 12) =>
+    req<ConsumoData>(`/api/estoque/consumo?obra=${obra}&meses=${meses}`),
   posicao: (obra: string, nivel: 'grupo' | 'familia' = 'grupo', detalhe = false) =>
     req<Posicao>(`/api/estoque/posicao?obra=${obra}&nivel=${nivel}&detalhe=${detalhe}`),
   atualizarGrupos: () =>
