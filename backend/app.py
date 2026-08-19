@@ -145,12 +145,27 @@ def _movimentos(prevision_id: str, force: bool = False) -> list[dict]:
     return _MOVS_CACHE[prevision_id]
 
 
+def _enriquecer_classificacao(itens: list[dict]):
+    """Substitui a classificação por palavra-chave pela REAL do Sienge:
+    família + grupo reais, e a MACROFAMÍLIA derivada do nome da família (confiável).
+    Assim o insumo não 'some' num macro errado. Sem mapa -> mantém o fallback."""
+    import taxonomia
+    for i in itens:
+        familia, grupo, cat = grupos_sienge.grupo_de(i["resource_id"])
+        i["familia"] = familia
+        i["grupo_sienge"] = grupo
+        i["categoria"] = cat
+        # macrofamília derivada da família real; sem família -> "Outros" (taxonomia única)
+        i["macro"] = taxonomia.macrofamilia_de(familia) if familia else "Outros"
+
+
 def _analise(prevision_id: str, janela_dias: int = 90) -> dict:
     c = _ANALISE_CACHE.get(prevision_id)
     if c and c["janela"] == janela_dias:
         return c["resultado"]
     res = engine.analisar(_movimentos(prevision_id), hoje=date.today(),
                           janela_dias=janela_dias)
+    _enriquecer_classificacao(res["itens"])  # itens de alertas/parados são os mesmos objetos
     _ANALISE_CACHE[prevision_id] = {"janela": janela_dias, "resultado": res}
     return res
 
@@ -228,14 +243,22 @@ def consumo(obra: str = Query(...), meses: int = 12,
 
 
 def _posicao(prevision_id: str, nivel: str, detalhe: bool):
-    """Consolida a posição de estoque atual por grupo/família REAL do Sienge."""
-    itens = _analise(prevision_id)["itens"]
+    """Consolida a posição de estoque atual pela classificação REAL do Sienge.
+    Níveis: grupo (6, topo) -> macro (macrofamília derivada) -> familia (151)."""
+    itens = _analise(prevision_id)["itens"]  # já enriquecidos com familia/grupo_sienge/macro
     grupos: dict[str, dict] = {}
     total_valor = 0.0
     sem_grupo = 0
     for i in itens:
-        familia, grupo, cat = grupos_sienge.grupo_de(i["resource_id"])
-        chave = (familia if nivel == "familia" else grupo) or "(Sem grupo)"
+        familia = i.get("familia") or ""
+        grupo = i.get("grupo_sienge") or ""
+        cat = i.get("categoria") or ""
+        if nivel == "familia":
+            chave = familia or "(Sem classificação)"
+        elif nivel == "macro":
+            chave = i.get("macro") or "Outros"
+        else:  # grupo
+            chave = grupo or "(Sem classificação)"
         if not (familia or grupo):
             sem_grupo += 1
         g = grupos.get(chave)
@@ -281,7 +304,7 @@ def _posicao(prevision_id: str, nivel: str, detalhe: bool):
 def posicao(obra: str = Query(...), nivel: str = "grupo", detalhe: bool = False,
             usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
-    if nivel not in ("grupo", "familia"):
+    if nivel not in ("grupo", "familia", "macro"):
         nivel = "grupo"
     return _posicao(obra, nivel, detalhe)
 
@@ -338,9 +361,9 @@ def movimentos(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
 
 
 def _macros_presentes(itens):
-    from taxonomia import MACRO_ORDEM
+    from taxonomia import MACRO_FAMILIA_ORDEM
     presentes = {i["macro"] for i in itens}
-    return [m for m in MACRO_ORDEM if m in presentes]
+    return [m for m in MACRO_FAMILIA_ORDEM if m in presentes]
 
 
 # ---------------------------------------------------------------- escrita

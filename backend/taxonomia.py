@@ -90,3 +90,80 @@ def grupo_de(descricao: str) -> str:
 
 def macro_de(grupo: str) -> str:
     return _GRUPO_MACRO.get(grupo, "Outros")
+
+
+# ============================================================================
+# MACROFAMÍLIA — derivada do NOME DA FAMÍLIA REAL do Sienge (confiável), não da
+# descrição do insumo. A família é a verdade; a macrofamília agrupa famílias.
+# ============================================================================
+
+MACRO_FAMILIA_ORDEM = [
+    "Estrutura & Concreto",
+    "Alvenaria & Vedação",
+    "Hidráulica",
+    "Elétrica",
+    "Revestimento & Acabamento",
+    "Impermeab. & Isolamento",
+    "Esquadrias & Madeiras",
+    "Fixação",
+    "PCI & Prevenção",
+    "Climatização",
+    "EPI & Segurança",
+    "Ferramentas & Consumíveis",
+    "Canteiro & Escritório",
+    "Áreas Comuns & Decoração",
+    "Equipamentos",
+    "Mão de Obra",
+    "Gestão & Verbas",
+    "Outros",
+]
+
+# (macrofamília, [palavras-chave no NOME DA FAMÍLIA]). Ordem = prioridade.
+_REGRAS_MACROFAMILIA = [
+    ("Hidráulica", ["hidraulic", "materiais gas", "tubos e conexoes gas", " gas -",
+        "caixas de passagem", "inspecao"]),
+    ("Elétrica", ["eletric", "spda", "eletroeletronic", "comunicacao e seguranca"]),
+    ("PCI & Prevenção", ["pci", "preventivo", "incendio", "(shp)"]),
+    ("Climatização", ["climatizacao", "exaustao", "renovacao de ar"]),
+    ("Estrutura & Concreto", ["concreto", "aco para estrutura", "arames e trelic",
+        "aglomerantes", "agregados", "argamassa", "espacadores de armadura",
+        "laje pre-moldada", "telas para reforco", "fundacoes", "supraestrutura",
+        "formas, travamento", "terraplanagem"]),
+    ("Alvenaria & Vedação", ["elementos de vedacao"]),
+    ("Revestimento & Acabamento", ["revestimentos ceramic", "pintura", "forros",
+        "drywall", "rejuntes", "rodape", "marmores e granitos", "pavimentos",
+        "gesso", "elementos complementares"]),
+    ("Impermeab. & Isolamento", ["impermeabiliz", "isolantes", "isopor"]),
+    ("Esquadrias & Madeiras", ["esquadria", "portas de madeira", "madeira",
+        "corrimao", "serralheria", "dobradicas e fechaduras"]),
+    ("Fixação", ["parafusos", "pregos", "finca-pinos", "materiais de fixacao",
+        "aditivos, colas"]),
+    ("Áreas Comuns & Decoração", ["areas comuns", "decoracao", "churrasqueira",
+        "coberturas", "academia", "jardinagem", "sala de jogos", "paisagismo"]),
+    ("EPI & Segurança", ["epi", "epc "]),
+    ("Ferramentas & Consumíveis", ["ferramenta", "consumiveis", "pecas de reposicao"]),
+    ("Canteiro & Escritório", ["papelaria", "limpeza", "copa e cozinha", "farmacia",
+        "instalacoes e canteiro", "computadores e perifericos", "lubrificantes",
+        "confraternizac", "veiculares"]),
+    ("Equipamentos", ["equipamentos e apoios", "elevador", "grua", "locacao",
+        "equipamentos pesados", "operacao de equipamentos", "manutencoes e reparos"]),
+    ("Mão de Obra", ["mao de obra", "empreitada"]),
+    ("Gestão & Verbas", ["gestao e incorporacao", "verbas", "estimativas",
+        "taxas e impostos", "corretagem", "outorga", "consultoria", "colaboradores",
+        "custos incorridos", "servicos tecnicos", "aquisicao do terreno", "fretes",
+        "prestacao de servic"]),
+]
+
+
+def macrofamilia_de(familia: str) -> str:
+    """Deriva a macrofamília a partir do NOME da família real do Sienge."""
+    d = _norm(familia)
+    if not d or "desativad" in d or "a desativar" in d:
+        return "Outros"
+    # usa só o trecho após o último '|' (o nome específico da família)
+    especifico = _norm(familia.split("|")[-1])
+    for macro, palavras in _REGRAS_MACROFAMILIA:
+        for p in palavras:
+            if p in especifico or p in d:
+                return macro
+    return "Outros"

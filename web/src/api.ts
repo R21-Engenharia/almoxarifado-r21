@@ -41,6 +41,9 @@ export interface Item {
   descricao: string
   grupo: string
   macro: string
+  familia?: string
+  grupo_sienge?: string
+  categoria?: string
   saldo: number
   unidade: string
   consumo_dia: number
@@ -130,7 +133,7 @@ export const api = {
     req<Financeiro>(`/api/estoque/financeiro?obra=${obra}&meses=${meses}`),
   consumo: (obra: string, meses = 12) =>
     req<ConsumoData>(`/api/estoque/consumo?obra=${obra}&meses=${meses}`),
-  posicao: (obra: string, nivel: 'grupo' | 'familia' = 'grupo', detalhe = false) =>
+  posicao: (obra: string, nivel: 'grupo' | 'familia' | 'macro' = 'macro', detalhe = false) =>
     req<Posicao>(`/api/estoque/posicao?obra=${obra}&nivel=${nivel}&detalhe=${detalhe}`),
   atualizarGrupos: () =>
     req<{ ok: boolean; rodando?: boolean; atual?: number; n?: number }>(`/api/estoque/grupos/atualizar`, { method: 'POST' }),
@@ -162,4 +165,9 @@ export function brl(v: number) {
 export function num(v: number | null, d = 0) {
   if (v === null || v === undefined) return '—'
   return v.toLocaleString('pt-BR', { maximumFractionDigits: d })
+}
+// família curta: descarta o prefixo "Custos Diretos | ..." e mostra o nome específico
+export function familiaCurta(f?: string): string {
+  if (!f) return ''
+  const p = f.split('|'); return (p[p.length - 1] || f).trim()
 }

@@ -14,7 +14,7 @@ function baixarCSV(nome: string, linhas: (string | number)[][]) {
 export default function Posicao({ obra }: { obra: string }) {
   const [d, setD] = useState<Pos | null>(null)
   const [err, setErr] = useState('')
-  const [nivel, setNivel] = useState<'grupo' | 'familia'>('familia')
+  const [nivel, setNivel] = useState<'grupo' | 'familia' | 'macro'>('macro')
   const [sortKey, setSortKey] = useState<SortKey>('valor_em_estoque')
   const [atualizando, setAtualizando] = useState(false)
   const [msg, setMsg] = useState('')
@@ -64,7 +64,7 @@ export default function Posicao({ obra }: { obra: string }) {
   return (
     <div className="dash">
       <div className="kpi-row">
-        <div className="kpi-card"><div className="kpi-rot">Valor em estoque</div><div className="kpi-big">{brl(t.valor_em_estoque)}</div><div className="kpi-hint">{num(t.n_insumos)} insumos em {num(t.n_grupos)} {nivel === 'familia' ? 'famílias' : 'grupos'}</div></div>
+        <div className="kpi-card"><div className="kpi-rot">Valor em estoque</div><div className="kpi-big">{brl(t.valor_em_estoque)}</div><div className="kpi-hint">{num(t.n_insumos)} insumos em {num(t.n_grupos)} {nivel === 'familia' ? 'famílias' : nivel === 'macro' ? 'macrofamílias' : 'grupos'}</div></div>
         <div className="kpi-card"><div className="kpi-rot">Capital parado</div><div className="kpi-big" style={{ color: 'var(--parado)' }}>{brl(t.valor_parado)}</div><div className="kpi-hint">{t.valor_em_estoque ? num(t.valor_parado / t.valor_em_estoque * 100, 1) : 0}% do estoque</div></div>
         <div className="kpi-card"><div className="kpi-rot">Grupos / famílias</div><div className="kpi-big">{num(t.n_grupos)}</div><div className="kpi-hint">consolidação pela classificação do Sienge</div></div>
         <div className="kpi-card"><div className="kpi-rot">Sem classificação</div><div className="kpi-big">{num(t.sem_grupo)}</div><div className="kpi-hint">insumos fora do mapa de grupos</div></div>
@@ -81,13 +81,14 @@ export default function Posicao({ obra }: { obra: string }) {
       <div className="chart-card">
         <div className="chart-head">
           <div>
-            <h3>Posição de estoque por {nivel === 'familia' ? 'família' : 'grupo'}</h3>
+            <h3>Posição de estoque por {nivel === 'familia' ? 'família' : nivel === 'macro' ? 'macrofamília' : 'grupo'}</h3>
             <span className="chart-sub">Consolidação da posição atual pela classificação de insumos do Sienge · {d.hoje}</span>
           </div>
           <div className="chart-ctrls">
             <div className="seg sm">
-              <button className={nivel === 'familia' ? 'on' : ''} onClick={() => setNivel('familia')}>Família</button>
               <button className={nivel === 'grupo' ? 'on' : ''} onClick={() => setNivel('grupo')}>Grupo</button>
+              <button className={nivel === 'macro' ? 'on' : ''} onClick={() => setNivel('macro')}>Macrofamília</button>
+              <button className={nivel === 'familia' ? 'on' : ''} onClick={() => setNivel('familia')}>Família</button>
             </div>
             <button className="mini" onClick={exportarResumo}>⬇ Exportar resumo</button>
             <button className="mini" onClick={exportarDetalhado}>⬇ Detalhado</button>
@@ -99,7 +100,7 @@ export default function Posicao({ obra }: { obra: string }) {
         <div className="tbl-wrap">
           <table className="tbl">
             <thead><tr>
-              <th>{nivel === 'familia' ? 'Família' : 'Grupo'}</th>
+              <th>{nivel === 'familia' ? 'Família' : nivel === 'macro' ? 'Macrofamília' : 'Grupo'}</th>
               <th>Categoria</th>
               <Th k="n_insumos" sk={sortKey} set={setSortKey}>Insumos</Th>
               <Th k="valor_em_estoque" sk={sortKey} set={setSortKey}>Valor em estoque</Th>

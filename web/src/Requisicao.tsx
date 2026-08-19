@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, num, type Item, type EscritaItem } from './api'
+import { api, num, familiaCurta, type Item, type EscritaItem } from './api'
 
 type Cesta = Record<string, { item: Item; qtd: number }>
 
@@ -97,7 +97,7 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
               const over = q2 !== undefined && q2 > i.saldo
               return (
                 <tr key={i.resource_id} className={cesta[i.resource_id] ? 'sel' : ''}>
-                  <td><div className="desc">{i.descricao}</div><div className="meta">{i.macro} · #{i.resource_id}</div></td>
+                  <td><div className="desc">{i.descricao}</div><div className="meta">{i.macro}{i.familia ? ` · ${familiaCurta(i.familia)}` : ''} · #{i.resource_id}</div></td>
                   <td className="r">{num(i.saldo, 2)} <span className="u">{i.unidade}</span></td>
                   <td className="r">
                     <input type="number" min={0} step="any" className="qtd" style={over ? { borderColor: 'var(--ruptura)' } : undefined}

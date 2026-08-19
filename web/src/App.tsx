@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
-  api, brl, num, STATUS_LABEL,
+  api, brl, num, familiaCurta, STATUS_LABEL,
   type Item, type Material, type Movimento, type Obra, type Status, type EscritaItem,
 } from './api'
 import { supabase, authAtiva } from './supabase'
@@ -302,7 +302,7 @@ function ItemTable({ itens, cols }: { itens: Item[]; cols: string[] }) {
         <tbody>
           {itens.map(i => (
             <tr key={i.resource_id}>
-              <td><div className="desc">{i.descricao}</div><div className="meta">{i.macro} · #{i.resource_id}</div></td>
+              <td><div className="desc">{i.descricao}</div><div className="meta">{i.macro}{i.familia ? ` · ${familiaCurta(i.familia)}` : ''} · #{i.resource_id}</div></td>
               <td><StatusPill s={i.status} /></td>
               {cols.includes('cobertura') && <td className="r">{i.cobertura_dias === null ? '—' : `${num(i.cobertura_dias, 1)} d`}</td>}
               {cols.includes('saldo') && <td className="r">{num(i.saldo, 2)} {i.unidade}</td>}
@@ -387,7 +387,7 @@ function Operar({ obra }: { obra: string }) {
               <tr key={i.resource_id} className={cesta[i.resource_id] ? 'sel' : ''}>
                 <td>
                   <div className="desc">{i.descricao}</div>
-                  <div className="meta"><StatusPill s={i.status} /> {i.macro} · #{i.resource_id}</div>
+                  <div className="meta"><StatusPill s={i.status} /> {i.macro}{i.familia ? ` · ${familiaCurta(i.familia)}` : ''} · #{i.resource_id}</div>
                 </td>
                 <td className="r">{num(i.saldo, 2)} <span className="u">{i.unidade}</span></td>
                 <td className="r">
