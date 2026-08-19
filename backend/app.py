@@ -354,6 +354,8 @@ class ItemEscrita(BaseModel):
 
 class Escrita(BaseModel):
     itens: list[ItemEscrita]
+    terceiro: str | None = None       # quem retira o material (requisição/retirada)
+    solicitante: str | None = None    # quem solicitou
 
 
 class Estorno(BaseModel):
@@ -412,7 +414,11 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
     o = obra_ou_erro(prevision_id)
     tipo_id, doc = _OP[operacao]
     hoje = date.today().isoformat()
-    notes = f"Via app Almoxarifado R21 ({operacao}) por {usuario}"
+    notes = f"Via app BOX21 ({operacao}) por {usuario}"
+    if corpo.terceiro:
+        notes += f" | Retirada: {corpo.terceiro}"
+    if corpo.solicitante:
+        notes += f" | Solic.: {corpo.solicitante}"
 
     if _modo_demo():
         resp = {"status": 201, "movement_id": f"DEMO-{operacao}", "resposta": {"demo": True}}
@@ -444,6 +450,7 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
         sienge_resposta=resp["resposta"],
         itens=[{"resource_id": i.resource_id, "quantidade": i.quantidade,
                 "unidade": i.unidade, "descricao": i.descricao} for i in corpo.itens],
+        terceiro=corpo.terceiro, solicitante=corpo.solicitante,
     )
     return {"ok": True, "modo": "demo" if _modo_demo() else "sienge",
             "sienge": resp, "auditoria_ids": ids}

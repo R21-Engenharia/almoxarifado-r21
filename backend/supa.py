@@ -91,7 +91,7 @@ TBL = "/rest/v1/estoque_movimentos"
 
 def registrar(usuario, obra, operacao, movement_type_id, document_id,
               movement_date, sienge_status, sienge_movement_id, sienge_resposta,
-              itens, estorno_de=None) -> list[int]:
+              itens, estorno_de=None, terceiro=None, solicitante=None) -> list[int]:
     linhas = [{
         "usuario": usuario, "obra": str(obra),
         "resource_id": str(it["resource_id"]), "descricao": it.get("descricao"),
@@ -100,6 +100,7 @@ def registrar(usuario, obra, operacao, movement_type_id, document_id,
         "document_id": document_id, "movement_date": movement_date,
         "sienge_status": sienge_status, "sienge_movement_id": str(sienge_movement_id or ""),
         "sienge_resposta": sienge_resposta, "estorno_de": estorno_de,
+        "terceiro": terceiro, "solicitante": solicitante,
     } for it in itens]
     with httpx.Client(timeout=TIMEOUT) as cli:
         r = cli.post(f"{_url()}{TBL}", headers={**_headers(), "Prefer": "return=representation"},

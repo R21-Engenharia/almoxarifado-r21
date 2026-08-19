@@ -9,10 +9,11 @@ import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './
 import Financeiro from './Financeiro'
 import Posicao from './Posicao'
 import Consumo from './Consumo'
+import Requisicao from './Requisicao'
 import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
 
 type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
-  | 'equipamentos' | 'estoque' | 'operar' | 'historico'
+  | 'equipamentos' | 'estoque' | 'requisicao' | 'operar' | 'historico'
 
 const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] }[] = [
   {
@@ -28,6 +29,7 @@ const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] 
   },
   {
     grupo: 'Almoxarifado', itens: [
+      { id: 'requisicao', icone: '🧾', nome: 'Requisição' },
       { id: 'estoque', icone: '📦', nome: 'Estoque' },
       { id: 'operar', icone: '✍️', nome: 'Operar' },
       { id: 'historico', icone: '🕘', nome: 'Histórico' },
@@ -42,6 +44,7 @@ const TITULOS: Record<Secao, { t: string; s: string }> = {
   suprimentos: { t: 'Suprimentos (MRP)', s: 'Antecipe a ruptura antes de a frente parar' },
   fornecedores: { t: 'Fornecedores', s: 'Quem entrega no prazo e com qualidade' },
   equipamentos: { t: 'Equipamentos', s: 'Locação, ociosidade e custo' },
+  requisicao: { t: 'Requisição de material', s: 'Retirada guiada com baixa no estoque e ficha para assinatura' },
   estoque: { t: 'Estoque', s: 'Risco de ruptura e capital parado' },
   operar: { t: 'Operar almoxarifado', s: 'Baixa, entrada e ajustes no Sienge' },
   historico: { t: 'Histórico', s: 'Movimentações registradas pelo app' },
@@ -159,6 +162,7 @@ export default function App() {
           {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
           {obra && secao === 'posicao' && <Posicao obra={obra} />}
           {obra && secao === 'consumo' && <Consumo obra={obra} />}
+          {obra && secao === 'requisicao' && <Requisicao obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} operador={nomeExibicao} />}
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
           {obra && secao === 'historico' && <Historico obra={obra} />}

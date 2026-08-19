@@ -131,6 +131,39 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .embreve-dif p { margin: 0; font-size: 14px; }
 .embreve-requer { font-size: 12px; color: var(--muted); margin-top: 12px; }
 
+/* ===================== requisição / retirada ===================== */
+.req-topo { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-bottom: 14px; }
+@media (max-width: 640px) { .req-topo { grid-template-columns: 1fr; } }
+
+.ficha-acoes { display: flex; gap: 10px; margin-bottom: 16px; }
+.ficha-print { display: flex; justify-content: center; }
+.ficha { background: #fff; color: #14141a; width: 100%; max-width: 780px; border-radius: 10px;
+  padding: 28px 30px; border: 1px solid var(--line); }
+.ficha-head { display: flex; align-items: flex-start; justify-content: space-between;
+  border-bottom: 3px solid #14141a; padding-bottom: 12px; margin-bottom: 16px; }
+.ficha-tt { font-size: 18px; font-weight: 800; letter-spacing: .01em; }
+.ficha-sub { font-size: 12px; color: #666; margin-top: 2px; }
+.ficha-num { font-size: 14px; font-weight: 800; color: #e2231a; border: 2px solid #e2231a;
+  border-radius: 8px; padding: 6px 12px; white-space: nowrap; }
+.ficha-info { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; margin-bottom: 18px; }
+.ficha-info > div { font-size: 13.5px; }
+.ficha-info span { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: #888; }
+.ficha-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ficha-tbl th { text-align: left; background: #f1f1f3; color: #333; padding: 8px 10px; border-bottom: 2px solid #ddd; }
+.ficha-tbl td { padding: 7px 10px; border-bottom: 1px solid #eee; }
+.ficha-tbl .r, .ficha-tbl th.r { text-align: right; }
+.ficha-ass { display: flex; gap: 40px; margin-top: 48px; }
+.ficha-ass > div { flex: 1; text-align: center; font-size: 11.5px; color: #555; }
+.ficha-ass span { display: block; border-top: 1px solid #14141a; margin-bottom: 6px; height: 1px; }
+
+@media print {
+  body * { visibility: hidden; }
+  .ficha-print, .ficha-print * { visibility: visible; }
+  .ficha-print { position: absolute; left: 0; top: 0; width: 100%; }
+  .ficha { border: none; max-width: none; }
+  .no-print { display: none !important; }
+}
+
 /* mobile: sidebar vira gaveta */
 @media (max-width: 900px) {
   .side { position: fixed; left: 0; top: 0; z-index: 60; transform: translateX(-100%); transition: transform .2s; }

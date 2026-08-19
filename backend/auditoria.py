@@ -30,7 +30,9 @@ create table if not exists estoque_movimentos (
   sienge_resposta text,
   estorno_de integer references estoque_movimentos(id),
   estornado integer not null default 0,
-  removido_no_sienge integer not null default 0
+  removido_no_sienge integer not null default 0,
+  terceiro text,
+  solicitante text
 );
 create index if not exists idx_estoque_mov_obra on estoque_movimentos(obra, criado_em desc);
 """
@@ -45,11 +47,17 @@ def _conn():
 def init_db():
     with _conn() as c:
         c.executescript(_DDL)
+        # migração: garante colunas novas em bancos antigos
+        for col in ("terceiro text", "solicitante text"):
+            try:
+                c.execute(f"alter table estoque_movimentos add column {col}")
+            except sqlite3.OperationalError:
+                pass  # já existe
 
 
 def registrar(usuario, obra, operacao, movement_type_id, document_id,
               movement_date, sienge_status, sienge_movement_id, sienge_resposta,
-              itens, estorno_de=None) -> list[int]:
+              itens, estorno_de=None, terceiro=None, solicitante=None) -> list[int]:
     """Grava uma linha por item. Retorna os ids criados."""
     ids = []
     agora = datetime.now(timezone.utc).isoformat()
@@ -59,12 +67,14 @@ def registrar(usuario, obra, operacao, movement_type_id, document_id,
                 """insert into estoque_movimentos
                 (criado_em, usuario, obra, resource_id, descricao, operacao,
                  movement_type_id, quantidade, unidade, document_id, movement_date,
-                 sienge_status, sienge_movement_id, sienge_resposta, estorno_de)
-                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 sienge_status, sienge_movement_id, sienge_resposta, estorno_de,
+                 terceiro, solicitante)
+                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (agora, usuario, obra, str(it["resource_id"]), it.get("descricao"),
                  operacao, movement_type_id, float(it["quantidade"]), it.get("unidade"),
                  document_id, movement_date, sienge_status, str(sienge_movement_id or ""),
-                 json.dumps(sienge_resposta, ensure_ascii=False), estorno_de),
+                 json.dumps(sienge_resposta, ensure_ascii=False), estorno_de,
+                 terceiro, solicitante),
             )
             ids.append(cur.lastrowid)
     return ids
