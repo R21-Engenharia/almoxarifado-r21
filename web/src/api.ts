@@ -20,6 +20,17 @@ export interface ConsumoKpis {
 }
 export interface ConsumoData { hoje: string; kpis: ConsumoKpis; serie: ConsumoMes[]; top: ConsumoItem[] }
 
+export interface FornecedorItem {
+  supplier_id: string; nome: string; n_pedidos: number; valor_total: number
+  n_atrasados: number; n_autorizados: number; ultimo_pedido: string | null
+  pct_no_prazo: number; pct_do_total: number
+}
+export interface FornecedoresData {
+  hoje: string
+  kpis: { n_fornecedores: number; valor_total: number; n_pedidos: number; pct_atraso: number; meses: number }
+  fornecedores: FornecedorItem[]
+}
+
 export interface GrupoItem {
   resource_id: string; descricao: string; saldo: number; unidade: string
   valor_saldo: number; status: Status; cobertura_dias: number | null
@@ -133,6 +144,10 @@ export const api = {
     req<Financeiro>(`/api/estoque/financeiro?obra=${obra}&meses=${meses}`),
   consumo: (obra: string, meses = 12) =>
     req<ConsumoData>(`/api/estoque/consumo?obra=${obra}&meses=${meses}`),
+  fornecedores: (obra: string, meses = 12) =>
+    req<FornecedoresData>(`/api/estoque/fornecedores?obra=${obra}&meses=${meses}`),
+  atualizarPedidos: (obra: string) =>
+    req<{ ok: boolean; rodando?: boolean; atual?: number }>(`/api/estoque/pedidos/atualizar?obra=${obra}`, { method: 'POST' }),
   posicao: (obra: string, nivel: 'grupo' | 'familia' | 'macro' = 'macro', detalhe = false) =>
     req<Posicao>(`/api/estoque/posicao?obra=${obra}&nivel=${nivel}&detalhe=${detalhe}`),
   atualizarGrupos: () =>

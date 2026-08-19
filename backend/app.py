@@ -242,6 +242,69 @@ def consumo(obra: str = Query(...), meses: int = 12,
     return engine.consumo(_movimentos(obra), hoje=date.today(), meses=meses)
 
 
+# ---- compras (purchase-orders) --------------------------------------------
+_PEDIDOS_CACHE: dict[str, list[dict]] = {}
+_COLETA_PEDIDOS = {"rodando": False}
+
+
+def _pedidos(prevision_id: str, force: bool = False) -> list[dict]:
+    if not force and prevision_id in _PEDIDOS_CACHE:
+        return _PEDIDOS_CACHE[prevision_id]
+    p = os.path.join(_DATA_DIR, f"pedidos_{prevision_id}.json")
+    if not force and os.path.exists(p):
+        try:
+            _PEDIDOS_CACHE[prevision_id] = json.load(open(p, encoding="utf-8"))
+            return _PEDIDOS_CACHE[prevision_id]
+        except Exception:
+            pass
+    if _modo_demo():
+        _PEDIDOS_CACHE[prevision_id] = []
+        return []
+    o = obra_ou_erro(prevision_id)
+    _PEDIDOS_CACHE[prevision_id] = sienge.coletar_pedidos(o["building_id"])
+    try:
+        os.makedirs(_DATA_DIR, exist_ok=True)
+        json.dump(_PEDIDOS_CACHE[prevision_id], open(p, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+    return _PEDIDOS_CACHE[prevision_id]
+
+
+def _nomes_fornecedores(prevision_id: str) -> dict[str, str]:
+    nomes: dict[str, str] = {}
+    for m in _movimentos(prevision_id):
+        sid, nm = m.get("supplierId"), m.get("supplierName")
+        if sid and nm:
+            nomes[str(sid)] = nm
+    return nomes
+
+
+@app.get("/api/estoque/fornecedores")
+def fornecedores(obra: str = Query(...), meses: int = 12,
+                 usuario: str = Depends(usuario_logado)):
+    obra_ou_erro(obra)
+    return engine.fornecedores(_pedidos(obra), _nomes_fornecedores(obra),
+                               hoje=date.today(), meses=meses)
+
+
+@app.post("/api/estoque/pedidos/atualizar")
+def atualizar_pedidos(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
+    """(Re)coleta os pedidos de compra da obra em segundo plano (~6 min)."""
+    obra_ou_erro(obra)
+    if _modo_demo():
+        return {"ok": True, "modo": "demo"}
+    if not _COLETA_PEDIDOS["rodando"]:
+        import threading
+        def _bg():
+            try:
+                _COLETA_PEDIDOS["rodando"] = True
+                _pedidos(obra, force=True)
+            finally:
+                _COLETA_PEDIDOS["rodando"] = False
+        threading.Thread(target=_bg, daemon=True).start()
+    return {"ok": True, "rodando": True, "atual": len(_pedidos(obra))}
+
+
 def _posicao(prevision_id: str, nivel: str, detalhe: bool):
     """Consolida a posição de estoque atual pela classificação REAL do Sienge.
     Níveis: grupo (6, topo) -> macro (macrofamília derivada) -> familia (151)."""

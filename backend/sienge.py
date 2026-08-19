@@ -77,6 +77,26 @@ def coletar_movimentos(building_id: int, start_date: str | None = None,
     return out
 
 
+def coletar_pedidos(building_id: int) -> list[dict]:
+    """Puxa os cabeçalhos de purchase-orders da obra (paginado). Campos:
+    supplierId, date, totalAmount, deliveryLate, status, authorized, etc."""
+    url = f"{_base_v1()}/purchase-orders"
+    params = {"buildingId": building_id, "limit": LIMIT, "offset": 0}
+    out: list[dict] = []
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        while True:
+            r = c.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+            results = data.get("results", [])
+            out.extend(results)
+            total = (data.get("resultSetMetadata") or {}).get("count", len(out))
+            params["offset"] += LIMIT
+            if params["offset"] >= total or not results:
+                break
+    return out
+
+
 def buscar_movimento(movement_id: int) -> dict | None:
     """GET /inventory-movements/{id}. Retorna None se 404 (apagado no Sienge).
     Base para a reconciliação antes de estornar (handoff pendência #1)."""

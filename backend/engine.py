@@ -288,6 +288,64 @@ def financeiro(movimentos: list[dict], hoje: date | None = None, meses: int = 12
     }
 
 
+def fornecedores(pedidos: list[dict], nomes: dict[str, str] | None = None,
+                 hoje: date | None = None, meses: int = 12) -> dict:
+    """Scorecard de fornecedores a partir dos purchase-orders (cabeçalhos).
+    Por fornecedor: nº pedidos, valor comprado, % no prazo (1 - atraso), último pedido."""
+    hoje = hoje or date.today()
+    nomes = nomes or {}
+    ini = hoje - timedelta(days=meses * 31)
+    forn: dict[str, dict] = {}
+    total_valor = 0.0
+    for p in pedidos:
+        dt = _parse_data(p.get("date"))
+        if dt and dt < ini:
+            continue
+        sid = str(p.get("supplierId") or "")
+        if not sid:
+            continue
+        valor = float(p.get("totalAmount") or 0)
+        atrasado = bool(p.get("deliveryLate"))
+        autorizado = bool(p.get("authorized"))
+        f = forn.get(sid)
+        if f is None:
+            f = forn[sid] = {"supplier_id": sid, "nome": nomes.get(sid, f"Fornecedor {sid}"),
+                             "n_pedidos": 0, "valor_total": 0.0, "n_atrasados": 0,
+                             "n_autorizados": 0, "ultimo_pedido": None}
+        f["n_pedidos"] += 1
+        f["valor_total"] += valor
+        total_valor += valor
+        if atrasado:
+            f["n_atrasados"] += 1
+        if autorizado:
+            f["n_autorizados"] += 1
+        if dt and (not f["ultimo_pedido"] or dt.isoformat() > f["ultimo_pedido"]):
+            f["ultimo_pedido"] = dt.isoformat()
+
+    lista = []
+    for f in forn.values():
+        n = f["n_pedidos"]
+        f["valor_total"] = round(f["valor_total"], 2)
+        f["pct_no_prazo"] = round((1 - f["n_atrasados"] / n) * 100, 1) if n else 100.0
+        f["pct_do_total"] = round(f["valor_total"] / total_valor * 100, 1) if total_valor else 0
+        lista.append(f)
+    lista.sort(key=lambda x: -x["valor_total"])
+
+    n_pedidos = sum(f["n_pedidos"] for f in lista)
+    n_atras = sum(f["n_atrasados"] for f in lista)
+    return {
+        "hoje": hoje.isoformat(),
+        "kpis": {
+            "n_fornecedores": len(lista),
+            "valor_total": round(total_valor, 2),
+            "n_pedidos": n_pedidos,
+            "pct_atraso": round(n_atras / n_pedidos * 100, 1) if n_pedidos else 0,
+            "meses": meses,
+        },
+        "fornecedores": lista,
+    }
+
+
 def consumo(movimentos: list[dict], hoje: date | None = None, meses: int = 12) -> dict:
     """Módulo Consumo: série mensal de consumo (R$, só tipo Consumo), KPIs de
     ritmo/tendência e ranking dos insumos que mais consomem capital."""
