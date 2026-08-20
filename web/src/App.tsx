@@ -12,10 +12,11 @@ import Consumo from './Consumo'
 import Requisicao from './Requisicao'
 import Fornecedores from './Fornecedores'
 import Equipamentos from './EquipamentosView'
+import Aprovacoes from './AprovacaoView'
 import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
 
 type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
-  | 'equipamentos' | 'estoque' | 'requisicao' | 'operar' | 'historico'
+  | 'equipamentos' | 'estoque' | 'requisicao' | 'aprovacao' | 'operar' | 'historico'
 
 const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] }[] = [
   {
@@ -31,6 +32,7 @@ const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] 
   },
   {
     grupo: 'Almoxarifado', itens: [
+      { id: 'aprovacao', icone: '✅', nome: 'Aprovações' },
       { id: 'requisicao', icone: '🧾', nome: 'Requisição' },
       { id: 'estoque', icone: '📦', nome: 'Estoque' },
       { id: 'operar', icone: '✍️', nome: 'Operar' },
@@ -46,6 +48,7 @@ const TITULOS: Record<Secao, { t: string; s: string }> = {
   suprimentos: { t: 'Suprimentos (MRP)', s: 'Antecipe a ruptura antes de a frente parar' },
   fornecedores: { t: 'Fornecedores', s: 'Quem entrega no prazo e com qualidade' },
   equipamentos: { t: 'Equipamentos', s: 'Locação, ociosidade e custo' },
+  aprovacao: { t: 'Aprovações', s: 'Solicitações com dupla aprovação: Engenharia → Planejamento → Compras' },
   requisicao: { t: 'Requisição de material', s: 'Retirada guiada com baixa no estoque e ficha para assinatura' },
   estoque: { t: 'Estoque', s: 'Risco de ruptura e capital parado' },
   operar: { t: 'Operar almoxarifado', s: 'Baixa, entrada e ajustes no Sienge' },
@@ -167,6 +170,7 @@ export default function App() {
           {obra && secao === 'consumo' && <Consumo obra={obra} />}
           {obra && secao === 'fornecedores' && <Fornecedores obra={obra} />}
           {obra && secao === 'equipamentos' && <Equipamentos obra={obra} operador={nomeExibicao} abrirId={eqParam} />}
+          {obra && secao === 'aprovacao' && <Aprovacoes obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} />}
           {obra && secao === 'requisicao' && <Requisicao obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} operador={nomeExibicao} />}
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}

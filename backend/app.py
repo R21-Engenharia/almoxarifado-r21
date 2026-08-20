@@ -287,6 +287,54 @@ def fornecedores(obra: str = Query(...), meses: int = 12,
                                hoje=date.today(), meses=meses)
 
 
+# ---- aprovação: contexto orçamento × apropriação ---------------------------
+_WBS_CACHE: dict[str, dict] = {}
+
+
+def _wbs_map(prevision_id: str) -> dict:
+    if prevision_id not in _WBS_CACHE:
+        p = os.path.join(_DATA_DIR, f"orcamento_wbs_{prevision_id}.json")
+        try:
+            _WBS_CACHE[prevision_id] = json.load(open(p, encoding="utf-8"))
+        except Exception:
+            _WBS_CACHE[prevision_id] = {}
+    return _WBS_CACHE[prevision_id]
+
+
+@app.get("/api/aprovacao/insumo-orcamento")
+def insumo_orcamento(obra: str = Query(...), resource_id: str = Query(...),
+                     usuario: str = Depends(usuario_logado)):
+    """Contexto de um insumo para a análise da solicitação: onde está orçado
+    (subetapas WBS + qtd orçada), saldo de estoque e custo. Base do visualizador."""
+    o = obra_ou_erro(obra)
+    item = next((i for i in _analise(obra)["itens"] if i["resource_id"] == str(resource_id)), None)
+    aprop = [] if _modo_demo() else sienge.buscar_apropriacao(o["cost_center_id"], resource_id)
+    wbs = _wbs_map(obra)
+    subetapas = []
+    for a in aprop:
+        code = a.get("costEstimationItemReference")
+        info = wbs.get(str(code), {})
+        subetapas.append({
+            "sheet_item_id": a.get("sheetItemId"),
+            "building_unit_id": a.get("buildingUnitId"),
+            "wbs_code": code,
+            "descricao": info.get("descricao") or code,
+            "qtd_orcada": a.get("quantity"),
+            "apropriado_nf": None,   # preenchido pelo coletor de NF (fase 2)
+        })
+    subetapas.sort(key=lambda s: -(s.get("qtd_orcada") or 0))
+    return {
+        "resource_id": str(resource_id),
+        "descricao": item["descricao"] if item else "",
+        "unidade": item["unidade"] if item else "",
+        "saldo": item["saldo"] if item else 0,
+        "custo_unit": item["custo_unit"] if item else 0,
+        "familia": (item or {}).get("familia", ""),
+        "orcado_total": round(sum((s.get("qtd_orcada") or 0) for s in subetapas), 2),
+        "subetapas": subetapas,
+    }
+
+
 @app.post("/api/estoque/pedidos/atualizar")
 def atualizar_pedidos(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
     """(Re)coleta os pedidos de compra da obra em segundo plano (~6 min)."""

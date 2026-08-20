@@ -20,6 +20,15 @@ export interface ConsumoKpis {
 }
 export interface ConsumoData { hoje: string; kpis: ConsumoKpis; serie: ConsumoMes[]; top: ConsumoItem[] }
 
+export interface SubetapaOrcada {
+  sheet_item_id: number | null; building_unit_id: number | null
+  wbs_code: string; descricao: string; qtd_orcada: number | null; apropriado_nf: number | null
+}
+export interface InsumoOrcamento {
+  resource_id: string; descricao: string; unidade: string; saldo: number
+  custo_unit: number; familia: string; orcado_total: number; subetapas: SubetapaOrcada[]
+}
+
 export interface FornecedorItem {
   supplier_id: string; nome: string; n_pedidos: number; valor_total: number
   n_atrasados: number; n_autorizados: number; ultimo_pedido: string | null
@@ -156,6 +165,8 @@ export const api = {
     req<{ itens: Item[]; macro_ordem: string[] }>(`/api/estoque/catalogo?obra=${obra}`),
   insumos: (obra: string, q: string) =>
     req<{ itens: Item[] }>(`/api/estoque/insumos?obra=${obra}&q=${encodeURIComponent(q)}`),
+  insumoOrcamento: (obra: string, resourceId: string) =>
+    req<InsumoOrcamento>(`/api/aprovacao/insumo-orcamento?obra=${obra}&resource_id=${resourceId}`),
   movimentos: (obra: string) =>
     req<{ itens: Movimento[] }>(`/api/estoque/movimentos?obra=${obra}`),
   atualizar: (obra: string) =>
