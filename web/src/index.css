@@ -174,6 +174,13 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .eq-tbl td { vertical-align: middle; }
 .eq-tbl select, .modal-card select { background: var(--bg); color: var(--text); border: 1px solid var(--line);
   border-radius: 10px; padding: 11px 12px; width: 100%; }
+.eq-tbl .nowrap { white-space: nowrap; }
+.qr-etiqueta { background: #fff; color: #14141a; border-radius: 12px; padding: 18px 20px;
+  text-align: center; border: 2px solid #14141a; width: 260px; margin: 0 auto; }
+.qr-marca { font-weight: 900; letter-spacing: .06em; color: #e2231a; font-size: 15px; margin-bottom: 8px; }
+.qr-img { width: 200px; height: 200px; display: block; margin: 0 auto; }
+.qr-cod { font-size: 22px; font-weight: 800; margin-top: 8px; }
+.qr-nome { font-size: 12.5px; color: #555; margin-top: 2px; }
 
 /* mobile: sidebar vira gaveta */
 @media (max-width: 900px) {

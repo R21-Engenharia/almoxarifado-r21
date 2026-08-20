@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import QRCode from 'qrcode'
 import { authAtiva } from './supabase'
 import {
-  listar, criar, movimentar, historico, uploadFotoEquip,
+  listar, criar, movimentar, historico, uploadFotoEquip, buscarPorId,
   STATUS_EQUIP, CONSERVACAO_LABEL,
   type Equipamento, type EquipStatus, type Conservacao, type EquipMov,
 } from './equipamentos'
@@ -13,7 +14,7 @@ const CONS_TONE: Record<Conservacao, string> = { bom: 'ok', regular: 'baixo', ru
 const hoje = () => new Date().toISOString().slice(0, 10)
 const vencida = (d: string | null) => !!d && d < hoje()
 
-export default function Equipamentos({ obra, operador }: { obra: string; operador: string }) {
+export default function Equipamentos({ obra, operador, abrirId }: { obra: string; operador: string; abrirId?: string }) {
   const [lista, setLista] = useState<Equipamento[]>([])
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
@@ -21,9 +22,15 @@ export default function Equipamentos({ obra, operador }: { obra: string; operado
   const [novo, setNovo] = useState(false)
   const [movEq, setMovEq] = useState<Equipamento | null>(null)
   const [histEq, setHistEq] = useState<Equipamento | null>(null)
+  const [qrEq, setQrEq] = useState<Equipamento | null>(null)
 
   const carregar = () => listar(obra).then(setLista).catch(e => setErr(e instanceof Error ? e.message : String(e)))
   useEffect(() => { setErr(''); carregar() }, [obra])
+
+  // deep-link do QR: ?eq=<id> abre direto a movimentação daquele equipamento
+  useEffect(() => {
+    if (abrirId) buscarPorId(abrirId).then(e => { if (e) setMovEq(e) }).catch(() => {})
+  }, [abrirId])
 
   const filtrados = useMemo(() => {
     const ql = q.toLowerCase().trim()
@@ -86,8 +93,9 @@ export default function Equipamentos({ obra, operador }: { obra: string; operado
                   <td>{e.localizacao || '—'}</td>
                   <td>{e.responsavel || '—'}</td>
                   <td>{e.prox_manutencao ? <span style={vencida(e.prox_manutencao) ? { color: 'var(--ruptura)', fontWeight: 700 } : undefined}>{new Date(e.prox_manutencao + 'T00:00').toLocaleDateString('pt-BR')}</span> : '—'}</td>
-                  <td className="r">
+                  <td className="r nowrap">
                     <button className="mini" onClick={() => setMovEq(e)}>Movimentar</button>
+                    <button className="mini" style={{ marginLeft: 6 }} onClick={() => setQrEq(e)}>QR</button>
                     <button className="mini" style={{ marginLeft: 6 }} onClick={() => setHistEq(e)}>Histórico</button>
                   </td>
                 </tr>
@@ -101,6 +109,7 @@ export default function Equipamentos({ obra, operador }: { obra: string; operado
       {novo && <CadastroModal obra={obra} operador={operador} onSalvo={() => { setNovo(false); carregar() }} onFechar={() => setNovo(false)} />}
       {movEq && <MovimentarModal eq={movEq} onSalvo={() => { setMovEq(null); carregar() }} onFechar={() => setMovEq(null)} />}
       {histEq && <HistoricoModal eq={histEq} onFechar={() => setHistEq(null)} />}
+      {qrEq && <QrModal eq={qrEq} onFechar={() => setQrEq(null)} />}
     </div>
   )
 }
@@ -222,6 +231,35 @@ function HistoricoModal({ eq, onFechar }: { eq: Equipamento; onFechar: () => voi
           {movs.length === 0 && <div className="empty">Sem movimentações.</div>}
         </ul>
         <div className="modal-acts"><button className="cta" onClick={onFechar}>Fechar</button></div>
+      </div>
+    </div>
+  )
+}
+
+function QrModal({ eq, onFechar }: { eq: Equipamento; onFechar: () => void }) {
+  const [url, setUrl] = useState('')
+  const link = `${window.location.origin}/?eq=${eq.id}`
+  useEffect(() => {
+    QRCode.toDataURL(link, { width: 320, margin: 1 }).then(setUrl).catch(() => {})
+  }, [link])
+  return (
+    <div className="modal" onClick={onFechar}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 380 }}>
+        <div className="ficha-print">
+          <div className="qr-etiqueta">
+            <div className="qr-marca">BOX21</div>
+            {url && <img src={url} alt="QR" className="qr-img" />}
+            <div className="qr-cod">{eq.codigo}</div>
+            <div className="qr-nome">{eq.nome}</div>
+          </div>
+        </div>
+        <p className="chart-sub no-print" style={{ textAlign: 'center', margin: '10px 0' }}>
+          Escaneie para abrir e movimentar este equipamento.
+        </p>
+        <div className="modal-acts no-print">
+          <button className="ghost" onClick={onFechar}>Fechar</button>
+          <button className="cta" onClick={() => window.print()}>Imprimir etiqueta</button>
+        </div>
       </div>
     </div>
   )

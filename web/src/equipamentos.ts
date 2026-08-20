@@ -53,6 +53,12 @@ export async function listar(obra: string): Promise<Equipamento[]> {
   return (data || []) as Equipamento[]
 }
 
+export async function buscarPorId(id: string): Promise<Equipamento | null> {
+  if (!supabase) return null
+  const { data } = await supabase.from('equipamentos').select('*').eq('id', id).maybeSingle()
+  return (data as Equipamento | null) ?? null
+}
+
 export async function criar(e: Partial<Equipamento> & { obra: string }): Promise<Equipamento> {
   if (!supabase) throw new Error('Supabase indisponível')
   const criado_por = await usuarioAtual()

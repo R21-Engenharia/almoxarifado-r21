@@ -56,7 +56,8 @@ export default function App() {
   const [obras, setObras] = useState<Obra[]>([])
   const [obra, setObra] = useState<string>('')
   const [modo, setModo] = useState<string>('')
-  const [secao, setSecao] = useState<Secao>('financeiro')
+  const eqParam = new URLSearchParams(window.location.search).get('eq') || undefined
+  const [secao, setSecao] = useState<Secao>(eqParam ? 'equipamentos' : 'financeiro')
   const [menuAberto, setMenuAberto] = useState(false)
   const [erroAcesso, setErroAcesso] = useState<string>('')
   // usuário: e-mail da sessão Supabase; em dev (sem auth) usa um rótulo fixo
@@ -165,7 +166,7 @@ export default function App() {
           {obra && secao === 'posicao' && <Posicao obra={obra} />}
           {obra && secao === 'consumo' && <Consumo obra={obra} />}
           {obra && secao === 'fornecedores' && <Fornecedores obra={obra} />}
-          {obra && secao === 'equipamentos' && <Equipamentos obra={obra} operador={nomeExibicao} />}
+          {obra && secao === 'equipamentos' && <Equipamentos obra={obra} operador={nomeExibicao} abrirId={eqParam} />}
           {obra && secao === 'requisicao' && <Requisicao obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} operador={nomeExibicao} />}
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
