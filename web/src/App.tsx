@@ -14,6 +14,7 @@ import Fornecedores from './Fornecedores'
 import Equipamentos from './EquipamentosView'
 import Aprovacoes from './AprovacaoView'
 import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
+import Loader from './Loader'
 
 type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
   | 'equipamentos' | 'estoque' | 'requisicao' | 'aprovacao' | 'operar' | 'historico'
@@ -96,7 +97,7 @@ export default function App() {
     }
   }, [usuario])
 
-  if (carregandoSessao) return <div className="loading">Carregando…</div>
+  if (carregandoSessao) return <Loader full label="o BOX21" dica="Verificando seu acesso…" />
   if (!usuario) return <Login />
 
   const sair = async () => { if (supabase) await supabase.auth.signOut(); setUsuario(null); setPerfil(null) }
@@ -165,6 +166,7 @@ export default function App() {
         )}
 
         <main className="area">
+          {!obra && !erroAcesso && <Loader label={TITULOS[secao].t.toLowerCase()} dica="Conectando ao Sienge e listando as obras…" />}
           {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
           {obra && secao === 'posicao' && <Posicao obra={obra} />}
           {obra && secao === 'consumo' && <Consumo obra={obra} />}
@@ -251,7 +253,7 @@ function Painel({ obra }: { obra: string }) {
     finally { setAtualizando(false) }
   }
   if (err) return <div className="err">Falha ao carregar: {err}</div>
-  if (!d) return <div className="loading">Carregando…</div>
+  if (!d) return <Loader label="o estoque" />
   const k = d.kpis
   return (
     <div className="painel">

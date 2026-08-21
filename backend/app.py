@@ -335,6 +335,94 @@ def insumo_orcamento(obra: str = Query(...), resource_id: str = Query(...),
     }
 
 
+# ---- aprovação: solicitações de compra REAIS do Sienge (purchase-requests) ----
+import time as _time
+_PEND_CACHE: dict = {"ts": 0.0, "data": []}
+_BID_OBRA = {o["building_id"]: pid for pid, o in OBRAS.items()}
+
+
+def _pendentes_todas():
+    if _time.time() - _PEND_CACHE["ts"] < 90 and _PEND_CACHE["data"]:
+        return _PEND_CACHE["data"]
+    if _modo_demo():
+        return []
+    itens = sienge.solic_pendentes()
+    reqs: dict[int, list[dict]] = {}
+    for it in itens:
+        reqs.setdefault(it["purchaseRequestId"], []).append(it)
+    out = []
+    for pr, its in reqs.items():
+        try:
+            h = sienge.solic_header(pr)
+        except Exception:
+            continue
+        # a API traz itens de solicitações CANCELADAS/rascunho no filtro
+        # authorized=false&disapproved=false — só interessa o que aguarda autorização
+        if h.get("draft") or (h.get("status") or "").upper() in ("CANCELED", "CANCELLED"):
+            continue
+        obra = _BID_OBRA.get(h.get("buildingId"))
+        if not obra:
+            continue
+        out.append({
+            "purchase_request_id": pr, "obra": obra,
+            "requester": h.get("requesterUser"), "data": h.get("requestDate"),
+            "notes": h.get("notes"), "status": h.get("status"),
+            "itens": [{"item_number": it["itemNumber"], "resource_id": str(it["productId"]),
+                       "descricao": it["productDescription"], "quantidade": it["quantity"],
+                       "unidade": it.get("unitySymbol")} for it in its],
+        })
+    _PEND_CACHE.update(ts=_time.time(), data=out)
+    return out
+
+
+@app.get("/api/aprovacao/pendentes")
+def pendentes(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
+    obra_ou_erro(obra)
+    return {"solicitacoes": [s for s in _pendentes_todas() if s["obra"] == obra]}
+
+
+@app.get("/api/aprovacao/item-subetapa")
+def item_subetapa(obra: str = Query(...), pr_id: int = Query(...), item_number: int = Query(...),
+                  usuario: str = Depends(usuario_logado)):
+    """Subetapas (WBS) que o item da solicitação está pedindo, com descrição e %."""
+    obra_ou_erro(obra)
+    if _modo_demo():
+        return {"subetapas": []}
+    wbs = _wbs_map(obra)
+    subs = []
+    for a in sienge.solic_item_apropriacao(pr_id, item_number):
+        code = a.get("costEstimationItemReference")
+        subs.append({"wbs_code": code, "descricao": (wbs.get(str(code)) or {}).get("descricao") or code,
+                     "percentual": a.get("percentage")})
+    return {"subetapas": subs}
+
+
+class SolicAcao(BaseModel):
+    purchase_request_id: int
+    motivo: str | None = None
+
+
+@app.post("/api/aprovacao/sienge/autorizar")
+def sienge_autorizar(corpo: SolicAcao, usuario: str = Depends(usuario_logado)):
+    """Autoriza a solicitação no Sienge (após a dupla aprovação no BOX21)."""
+    try:
+        sienge.solic_autorizar(corpo.purchase_request_id)
+    except sienge.SiengeError as e:
+        raise HTTPException(422, e.mensagem)
+    _PEND_CACHE["ts"] = 0.0
+    return {"ok": True}
+
+
+@app.post("/api/aprovacao/sienge/reprovar")
+def sienge_reprovar(corpo: SolicAcao, usuario: str = Depends(usuario_logado)):
+    try:
+        sienge.solic_reprovar(corpo.purchase_request_id, corpo.motivo or "")
+    except sienge.SiengeError as e:
+        raise HTTPException(422, e.mensagem)
+    _PEND_CACHE["ts"] = 0.0
+    return {"ok": True}
+
+
 @app.post("/api/estoque/pedidos/atualizar")
 def atualizar_pedidos(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
     """(Re)coleta os pedidos de compra da obra em segundo plano (~6 min)."""

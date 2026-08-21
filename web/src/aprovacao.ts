@@ -1,31 +1,25 @@
+// Camada de dupla aprovação do BOX21 SOBRE as solicitações reais do Sienge.
+// A solicitação em si vem do Sienge (api.pendentesSolic). Aqui guardamos só o
+// estado da aprovação (Engenheiro -> Planejamento -> autoriza no Sienge),
+// numa tabela overlay chaveada pelo purchase_request_id.
 import { supabase } from './supabase'
+import { api } from './api'
 
 export type SolicStatus =
   | 'aguardando_engenharia' | 'aguardando_planejamento' | 'em_compras' | 'reprovada' | 'devolvida'
 
-export interface Solicitacao {
-  id: string
-  criado_em: string
-  criado_por: string | null
+export interface AprovOverlay {
+  purchase_request_id: number
   obra: string
-  obra_nome: string | null
-  resource_id: string
-  insumo_desc: string | null
-  unidade: string | null
-  quantidade: number
-  sheet_item_id: number | null
-  wbs_code: string | null
-  subetapa_desc: string | null
-  qtd_orcada: number | null
-  divergencia: boolean
-  justificativa: string | null
   status: SolicStatus
   eng_por: string | null; eng_em: string | null; eng_obs: string | null
   plan_por: string | null; plan_em: string | null; plan_obs: string | null
+  autorizado_sienge: boolean
+  criado_em: string
 }
 
-export interface SolicEvento {
-  id: number; solicitacao_id: string; quando: string
+export interface AprovEvento {
+  id: number; purchase_request_id: number; quando: string
   etapa: string | null; acao: string | null; usuario: string | null; observacao: string | null
 }
 
@@ -47,55 +41,6 @@ async function usuarioAtual(): Promise<string> {
   return data.user?.email || 'app'
 }
 
-export async function listar(obra: string): Promise<Solicitacao[]> {
-  if (!supabase) return []
-  const { data, error } = await supabase.from('solicitacoes').select('*')
-    .eq('obra', obra).order('criado_em', { ascending: false })
-  if (error) throw new Error(error.message)
-  return (data || []) as Solicitacao[]
-}
-
-export async function criar(s: Partial<Solicitacao> & { obra: string; resource_id: string; quantidade: number }): Promise<Solicitacao> {
-  if (!supabase) throw new Error('Supabase indisponível')
-  const criado_por = await usuarioAtual()
-  const { data, error } = await supabase.from('solicitacoes')
-    .insert({ ...s, criado_por, status: 'aguardando_engenharia' }).select().single()
-  if (error) throw new Error(error.message)
-  await evento(data.id, 'criacao', 'criada', 'Solicitação criada')
-  return data as Solicitacao
-}
-
-async function evento(solicitacao_id: string, etapa: string, acao: string, observacao?: string) {
-  if (!supabase) return
-  const usuario = await usuarioAtual()
-  await supabase.from('solicitacao_eventos').insert({ solicitacao_id, etapa, acao, usuario, observacao: observacao || null })
-}
-
-export async function decidir(s: Solicitacao, etapa: 'engenharia' | 'planejamento',
-  acao: 'aprovada' | 'reprovada' | 'devolvida', obs?: string): Promise<void> {
-  if (!supabase) throw new Error('Supabase indisponível')
-  const usuario = await usuarioAtual()
-  const agora = new Date().toISOString()
-  const patch: Partial<Solicitacao> = {}
-  if (etapa === 'engenharia') {
-    patch.eng_por = usuario; patch.eng_em = agora; patch.eng_obs = obs || null
-    patch.status = acao === 'aprovada' ? 'aguardando_planejamento' : acao === 'devolvida' ? 'devolvida' : 'reprovada'
-  } else {
-    patch.plan_por = usuario; patch.plan_em = agora; patch.plan_obs = obs || null
-    patch.status = acao === 'aprovada' ? 'em_compras' : acao === 'devolvida' ? 'devolvida' : 'reprovada'
-  }
-  const { error } = await supabase.from('solicitacoes').update(patch).eq('id', s.id)
-  if (error) throw new Error(error.message)
-  await evento(s.id, etapa, acao, obs)
-}
-
-export async function reenviar(s: Solicitacao, obs?: string): Promise<void> {
-  if (!supabase) throw new Error('Supabase indisponível')
-  const { error } = await supabase.from('solicitacoes').update({ status: 'aguardando_engenharia' }).eq('id', s.id)
-  if (error) throw new Error(error.message)
-  await evento(s.id, 'criacao', 'reenviada', obs)
-}
-
 export async function meuPapel(): Promise<string> {
   if (!supabase) return 'admin'
   const { data: u } = await supabase.auth.getUser()
@@ -105,9 +50,86 @@ export async function meuPapel(): Promise<string> {
   return ((data?.role as string) || '').toLowerCase()
 }
 
-export async function eventos(id: string): Promise<SolicEvento[]> {
+// Estado overlay (todas as PRs de uma obra), como mapa por purchase_request_id.
+export async function overlays(obra: string): Promise<Record<number, AprovOverlay>> {
+  if (!supabase) return {}
+  const { data, error } = await supabase.from('aprov_sienge').select('*').eq('obra', obra)
+  if (error) throw new Error(error.message)
+  const m: Record<number, AprovOverlay> = {}
+  for (const o of (data || []) as AprovOverlay[]) m[o.purchase_request_id] = o
+  return m
+}
+
+async function garantir(pr: number, obra: string): Promise<AprovOverlay> {
+  if (!supabase) throw new Error('Supabase indisponível')
+  const { data } = await supabase.from('aprov_sienge').select('*').eq('purchase_request_id', pr).maybeSingle()
+  if (data) return data as AprovOverlay
+  const { data: novo, error } = await supabase.from('aprov_sienge')
+    .insert({ purchase_request_id: pr, obra, status: 'aguardando_engenharia' }).select().single()
+  if (error) throw new Error(error.message)
+  return novo as AprovOverlay
+}
+
+async function evento(pr: number, etapa: string, acao: string, observacao?: string) {
+  if (!supabase) return
+  const usuario = await usuarioAtual()
+  await supabase.from('aprov_sienge_eventos')
+    .insert({ purchase_request_id: pr, etapa, acao, usuario, observacao: observacao || null })
+}
+
+export async function eventos(pr: number): Promise<AprovEvento[]> {
   if (!supabase) return []
-  const { data } = await supabase.from('solicitacao_eventos').select('*')
-    .eq('solicitacao_id', id).order('quando')
-  return (data || []) as SolicEvento[]
+  const { data } = await supabase.from('aprov_sienge_eventos').select('*')
+    .eq('purchase_request_id', pr).order('quando')
+  return (data || []) as AprovEvento[]
+}
+
+// Engenheiro aprova -> aguardando_planejamento.
+// Planejamento aprova -> autoriza no Sienge -> em_compras.
+export async function aprovar(pr: number, obra: string, etapa: 'engenharia' | 'planejamento', obs?: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase indisponível')
+  await garantir(pr, obra)
+  const usuario = await usuarioAtual()
+  const agora = new Date().toISOString()
+  if (etapa === 'engenharia') {
+    const { error } = await supabase.from('aprov_sienge')
+      .update({ eng_por: usuario, eng_em: agora, eng_obs: obs || null, status: 'aguardando_planejamento' })
+      .eq('purchase_request_id', pr)
+    if (error) throw new Error(error.message)
+    await evento(pr, 'engenharia', 'aprovada', obs)
+    return
+  }
+  // Planejamento: só aqui escreve de volta no Sienge (autoriza -> vai p/ Compras).
+  await api.siengeAutorizar(pr)
+  const { error } = await supabase.from('aprov_sienge')
+    .update({ plan_por: usuario, plan_em: agora, plan_obs: obs || null, status: 'em_compras', autorizado_sienge: true })
+    .eq('purchase_request_id', pr)
+  if (error) throw new Error(error.message)
+  await evento(pr, 'planejamento', 'aprovada', obs)
+  await evento(pr, 'compras', 'autorizada_sienge', 'Autorizada no Sienge — enviada para Compras')
+}
+
+// Reprovar em qualquer etapa: grava disapproval no Sienge (terminal).
+export async function reprovar(pr: number, obra: string, etapa: 'engenharia' | 'planejamento', motivo: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase indisponível')
+  await garantir(pr, obra)
+  await api.siengeReprovar(pr, motivo)
+  const usuario = await usuarioAtual()
+  const agora = new Date().toISOString()
+  const patch = etapa === 'engenharia'
+    ? { eng_por: usuario, eng_em: agora, eng_obs: motivo, status: 'reprovada' as SolicStatus }
+    : { plan_por: usuario, plan_em: agora, plan_obs: motivo, status: 'reprovada' as SolicStatus }
+  const { error } = await supabase.from('aprov_sienge').update(patch).eq('purchase_request_id', pr)
+  if (error) throw new Error(error.message)
+  await evento(pr, etapa, 'reprovada', motivo)
+}
+
+// Devolver p/ ajuste: estado só do BOX21 (não escreve no Sienge; a PR segue lá
+// pendente para o solicitante corrigir).
+export async function devolver(pr: number, obra: string, etapa: 'engenharia' | 'planejamento', obs: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase indisponível')
+  await garantir(pr, obra)
+  const { error } = await supabase.from('aprov_sienge').update({ status: 'devolvida' }).eq('purchase_request_id', pr)
+  if (error) throw new Error(error.message)
+  await evento(pr, etapa, 'devolvida', obs)
 }

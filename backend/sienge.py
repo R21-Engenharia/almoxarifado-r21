@@ -140,6 +140,66 @@ def coletar_pedidos(building_id: int) -> list[dict]:
     return out
 
 
+def solic_pendentes() -> list[dict]:
+    """Itens de solicitação de compra AGUARDANDO autorização (todas as obras)."""
+    url = f"{_base_v1()}/purchase-requests/all/items"
+    params = {"authorized": "false", "disapproved": "false", "limit": 200, "offset": 0}
+    out: list[dict] = []
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        while True:
+            r = c.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+            res = data.get("results", [])
+            out.extend(res)
+            total = (data.get("resultSetMetadata") or {}).get("count", len(out))
+            params["offset"] += 200
+            if params["offset"] >= total or not res:
+                break
+    return out
+
+
+def solic_header(pr_id: int) -> dict:
+    """Cabeçalho da solicitação: buildingId, requesterUser, requestDate, notes, status."""
+    return get_json(f"/purchase-requests/{pr_id}")
+
+
+def solic_item_apropriacao(pr_id: int, item_number: int) -> list[dict]:
+    """Subetapas (WBS) que o item da solicitação está pedindo: [{costEstimationItemReference, percentage}]."""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.get(f"{_base_v1()}/purchase-requests/{pr_id}/items/{item_number}/buildings-appropriations")
+        if r.status_code != 200:
+            return []
+        return r.json().get("results", []) or []
+
+
+def solic_autorizar(pr_id: int) -> int:
+    """PATCH autoriza todos os itens da solicitação (após dupla aprovação no BOX21)."""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.patch(f"{_base_v1()}/purchase-requests/{pr_id}/authorize")
+        if r.status_code >= 400:
+            raise SiengeError(_msg_erro(r), r.status_code)
+        return r.status_code
+
+
+def solic_reprovar(pr_id: int, motivo: str) -> int:
+    """PATCH reprova todos os itens da solicitação."""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.patch(f"{_base_v1()}/purchase-requests/{pr_id}/disapproval",
+                    json={"disapprovalReason": motivo or "Reprovada via BOX21"})
+        if r.status_code >= 400:
+            raise SiengeError(_msg_erro(r), r.status_code)
+        return r.status_code
+
+
+def _msg_erro(r) -> str:
+    try:
+        j = r.json()
+        return j.get("clientMessage") or j.get("developerMessage") or j.get("message") or f"Sienge {r.status_code}"
+    except Exception:
+        return (r.text or f"Sienge {r.status_code}")[:200]
+
+
 def buscar_movimento(movement_id: int) -> dict | None:
     """GET /inventory-movements/{id}. Retorna None se 404 (apagado no Sienge).
     Base para a reconciliação antes de estornar (handoff pendência #1)."""

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, brl, num, type Financeiro as Fin, type FluxoMes } from './api'
+import Loader from './Loader'
 
 const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
 function rotuloMes(k: string) {
@@ -17,7 +18,7 @@ export default function Financeiro({ obra }: { obra: string }) {
   }, [obra, meses])
 
   if (err) return <div className="err">Falha ao carregar: {err}</div>
-  if (!d) return <div className="loading">Carregando financeiro…</div>
+  if (!d) return <Loader label="o financeiro" dica="Calculando capital em estoque e fluxo de materiais…" />
   const k = d.kpis
   const consumidoTone = k.estoque_consumido_pct < 20 ? 'baixo' : ''
   const ociosTone = k.ociosidade_media_dias >= 120 ? 'critico' : k.ociosidade_media_dias >= 60 ? 'baixo' : ''

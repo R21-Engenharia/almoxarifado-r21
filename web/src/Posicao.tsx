@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, brl, num, type Posicao as Pos, type GrupoPos } from './api'
+import Loader from './Loader'
 
 type SortKey = 'valor_em_estoque' | 'valor_parado' | 'n_insumos' | 'impacto_dia' | 'pct_do_total'
 
@@ -58,7 +59,7 @@ export default function Posicao({ obra }: { obra: string }) {
   }
 
   if (err) return <div className="err">Falha ao carregar: {err}</div>
-  if (!d) return <div className="loading">Carregando posição…</div>
+  if (!d) return <Loader label="a posição" dica="Consolidando o estoque pela classificação do Sienge…" />
   const t = d.totais
 
   return (

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, brl, num, type FornecedoresData, type FornecedorItem } from './api'
+import Loader from './Loader'
 
 type SortKey = 'valor_total' | 'n_pedidos' | 'pct_no_prazo'
 
@@ -41,7 +42,7 @@ export default function Fornecedores({ obra }: { obra: string }) {
   }
 
   if (err) return <div className="err">Falha ao carregar: {err}</div>
-  if (!d) return <div className="loading">Carregando fornecedores…</div>
+  if (!d) return <Loader label="os fornecedores" dica="Cruzando pedidos, prazos e notas fiscais…" />
   const k = d.kpis
   const semDados = k.n_pedidos === 0
 

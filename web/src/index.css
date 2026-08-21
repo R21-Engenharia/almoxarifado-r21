@@ -204,6 +204,15 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .ctx-time { margin: 8px 0 4px; }
 .ctx-ev { display: flex; gap: 10px; padding: 6px 0; }
 .ctx-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex-shrink: 0; }
+.ctx-itens { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.ctx-item { background: var(--sidebar); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.ctx-item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ctx-subs { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.ctx-sub { border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; background: var(--bg); }
+.ctx-sub-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.ctx-sub-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.ctx-sub-nums b { color: var(--text); font-variant-numeric: tabular-nums; display: block; }
+@media (max-width: 560px) { .ctx-sub-nums { grid-template-columns: repeat(2, 1fr); } }
 
 /* mobile: sidebar vira gaveta */
 @media (max-width: 900px) {
@@ -303,6 +312,36 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 
 .empty { color: var(--muted); padding: 16px; text-align: center; font-size: 14px; }
 .loading { color: var(--muted); padding: 30px; text-align: center; }
+
+/* ===================== Loader BOX21 (marca) ===================== */
+.bx-loader { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; min-height: 46vh; padding: 40px 20px; text-align: center; }
+.bx-loader.full { min-height: 100vh; }
+/* prateleira: 3x3 caixas enchendo em onda diagonal (vermelho da marca) */
+.bx-crate { display: grid; grid-template-columns: repeat(3, 22px); grid-auto-rows: 22px; gap: 5px;
+  padding: 9px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--sidebar);
+  box-shadow: 0 10px 30px #0007; }
+.bx-crate span { border-radius: 4px; background: var(--panel2); border: 1px solid var(--line);
+  animation: bxfill 1.5s ease-in-out infinite; }
+@keyframes bxfill {
+  0%, 100% { background: var(--panel2); border-color: var(--line); box-shadow: none; transform: scale(.9); }
+  35%      { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-d); transform: scale(1); }
+}
+.bx-load-tt { font-weight: 800; font-size: 16px; letter-spacing: .01em; }
+.bx-dots { font-weight: 800; }
+.bx-dots i { font-style: normal; opacity: .25; animation: bxdot 1.2s infinite; }
+.bx-dots i:nth-child(2) { animation-delay: .2s; }
+.bx-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes bxdot { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+.bx-sub { color: var(--muted); font-size: 13px; max-width: 320px; }
+.bx-bar { width: 190px; height: 4px; border-radius: 999px; background: var(--panel2); overflow: hidden; }
+.bx-bar i { display: block; width: 40%; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: bxbar 1.15s ease-in-out infinite; }
+@keyframes bxbar { 0% { transform: translateX(-120%); } 100% { transform: translateX(360%); } }
+@media (prefers-reduced-motion: reduce) {
+  .bx-crate span, .bx-dots i, .bx-bar i { animation-duration: 0s; }
+  .bx-crate span { background: var(--accent); border-color: var(--accent); }
+}
 .err { color: var(--ruptura); padding: 16px; }
 
 /* operar */

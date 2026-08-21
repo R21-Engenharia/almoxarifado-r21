@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, brl, num, type ConsumoData, type ConsumoMes } from './api'
+import Loader from './Loader'
 
 const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
 const rotuloMes = (k: string) => { const [y, m] = k.split('-'); return `${MESES_PT[+m - 1]}/${y.slice(2)}` }
@@ -14,7 +15,7 @@ export default function Consumo({ obra }: { obra: string }) {
   }, [obra, meses])
 
   if (err) return <div className="err">Falha ao carregar: {err}</div>
-  if (!d) return <div className="loading">Carregando consumo…</div>
+  if (!d) return <Loader label="o consumo" dica="Apurando onde e em quê o material foi gasto…" />
   const k = d.kpis
   const tend = k.tendencia_pct
   const tendTxt = tend === null ? '—' : `${tend > 0 ? '▲' : '▼'} ${num(Math.abs(tend), 1)}%`

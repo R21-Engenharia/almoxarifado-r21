@@ -29,6 +29,19 @@ export interface InsumoOrcamento {
   custo_unit: number; familia: string; orcado_total: number; subetapas: SubetapaOrcada[]
 }
 
+export interface SolicSiengeItem {
+  item_number: number; resource_id: string; descricao: string
+  quantidade: number; unidade: string | null
+}
+export interface SolicSienge {
+  purchase_request_id: number; obra: string
+  requester: string | null; data: string | null; notes: string | null; status: string | null
+  itens: SolicSiengeItem[]
+}
+export interface ItemSubetapa {
+  wbs_code: string; descricao: string; percentual: number | null
+}
+
 export interface FornecedorItem {
   supplier_id: string; nome: string; n_pedidos: number; valor_total: number
   n_atrasados: number; n_autorizados: number; ultimo_pedido: string | null
@@ -167,6 +180,14 @@ export const api = {
     req<{ itens: Item[] }>(`/api/estoque/insumos?obra=${obra}&q=${encodeURIComponent(q)}`),
   insumoOrcamento: (obra: string, resourceId: string) =>
     req<InsumoOrcamento>(`/api/aprovacao/insumo-orcamento?obra=${obra}&resource_id=${resourceId}`),
+  pendentesSolic: (obra: string) =>
+    req<{ solicitacoes: SolicSienge[] }>(`/api/aprovacao/pendentes?obra=${obra}`),
+  itemSubetapa: (obra: string, prId: number, itemNumber: number) =>
+    req<{ subetapas: ItemSubetapa[] }>(`/api/aprovacao/item-subetapa?obra=${obra}&pr_id=${prId}&item_number=${itemNumber}`),
+  siengeAutorizar: (purchase_request_id: number) =>
+    req<{ ok: boolean }>(`/api/aprovacao/sienge/autorizar`, { method: 'POST', body: JSON.stringify({ purchase_request_id }) }),
+  siengeReprovar: (purchase_request_id: number, motivo: string) =>
+    req<{ ok: boolean }>(`/api/aprovacao/sienge/reprovar`, { method: 'POST', body: JSON.stringify({ purchase_request_id, motivo }) }),
   movimentos: (obra: string) =>
     req<{ itens: Movimento[] }>(`/api/estoque/movimentos?obra=${obra}`),
   atualizar: (obra: string) =>

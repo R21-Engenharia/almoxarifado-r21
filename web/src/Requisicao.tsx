@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, num, familiaCurta, type Item, type EscritaItem } from './api'
+import Loader from './Loader'
 
 type Cesta = Record<string, { item: Item; qtd: number }>
 
@@ -106,7 +107,9 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
                 </tr>
               )
             })}
-            {filtrados.length === 0 && <tr><td colSpan={3}><div className="empty">Nenhum insumo com esse filtro.</div></td></tr>}
+            {filtrados.length === 0 && <tr><td colSpan={3}>
+              {itens.length === 0 ? <Loader label="os insumos da obra" dica="Carregando o catálogo do Sienge…" />
+                : <div className="empty">Nenhum insumo com esse filtro.</div>}</td></tr>}
           </tbody>
         </table>
       </div>
