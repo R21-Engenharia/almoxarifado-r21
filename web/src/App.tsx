@@ -15,29 +15,48 @@ import Equipamentos from './EquipamentosView'
 import Aprovacoes from './AprovacaoView'
 import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
 import Loader from './Loader'
+import iconFinanceiro from './assets/menu-icons/financeiro.webp'
+import iconPosicao from './assets/menu-icons/posicao.webp'
+import iconRecebimentos from './assets/menu-icons/recebimentos.webp'
+import iconConsumo from './assets/menu-icons/consumo.webp'
+import iconSuprimentos from './assets/menu-icons/suprimentos.webp'
+import iconFornecedores from './assets/menu-icons/fornecedores.webp'
+import iconEquipamentos from './assets/menu-icons/equipamentos.webp'
+import iconAprovacao from './assets/menu-icons/aprovacao.webp'
+import iconRequisicao from './assets/menu-icons/requisicao.webp'
+import iconEstoque from './assets/menu-icons/estoque.webp'
+import iconOperar from './assets/menu-icons/operar.webp'
+import iconHistorico from './assets/menu-icons/historico.webp'
 
 type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
   | 'equipamentos' | 'estoque' | 'requisicao' | 'aprovacao' | 'operar' | 'historico'
 
-const NAV: { grupo: string; itens: { id: Secao; icone: string; nome: string }[] }[] = [
+// ícone gráfico único por seção (arte BOX21) — reutilizado no render do menu, sem duplicar componente
+const ICON_SRC: Record<Secao, string> = {
+  financeiro: iconFinanceiro, posicao: iconPosicao, recebimentos: iconRecebimentos, consumo: iconConsumo,
+  suprimentos: iconSuprimentos, fornecedores: iconFornecedores, equipamentos: iconEquipamentos,
+  aprovacao: iconAprovacao, requisicao: iconRequisicao, estoque: iconEstoque, operar: iconOperar, historico: iconHistorico,
+}
+
+const NAV: { grupo: string; itens: { id: Secao; nome: string }[] }[] = [
   {
     grupo: 'Dashboards', itens: [
-      { id: 'financeiro', icone: '💰', nome: 'Financeiro' },
-      { id: 'posicao', icone: '📋', nome: 'Posição por grupo' },
-      { id: 'recebimentos', icone: '📥', nome: 'Recebimentos' },
-      { id: 'consumo', icone: '📊', nome: 'Consumo' },
-      { id: 'suprimentos', icone: '🧠', nome: 'Suprimentos' },
-      { id: 'fornecedores', icone: '🤝', nome: 'Fornecedores' },
-      { id: 'equipamentos', icone: '🔧', nome: 'Equipamentos' },
+      { id: 'financeiro', nome: 'Financeiro' },
+      { id: 'posicao', nome: 'Posição por grupo' },
+      { id: 'recebimentos', nome: 'Recebimentos' },
+      { id: 'consumo', nome: 'Consumo' },
+      { id: 'suprimentos', nome: 'Suprimentos' },
+      { id: 'fornecedores', nome: 'Fornecedores' },
+      { id: 'equipamentos', nome: 'Equipamentos' },
     ],
   },
   {
     grupo: 'Almoxarifado', itens: [
-      { id: 'aprovacao', icone: '✅', nome: 'Aprovações' },
-      { id: 'requisicao', icone: '🧾', nome: 'Requisição' },
-      { id: 'estoque', icone: '📦', nome: 'Estoque' },
-      { id: 'operar', icone: '✍️', nome: 'Operar' },
-      { id: 'historico', icone: '🕘', nome: 'Histórico' },
+      { id: 'aprovacao', nome: 'Aprovações' },
+      { id: 'requisicao', nome: 'Requisição' },
+      { id: 'estoque', nome: 'Estoque' },
+      { id: 'operar', nome: 'Operar' },
+      { id: 'historico', nome: 'Histórico' },
     ],
   },
 ]
@@ -116,7 +135,7 @@ export default function App() {
               <div className="side-grupo-tt">{g.grupo}</div>
               {g.itens.map(it => (
                 <button key={it.id} className={`side-item ${secao === it.id ? 'on' : ''}`} onClick={() => irPara(it.id)}>
-                  <span className="side-ic">{it.icone}</span><span className="side-nome">{it.nome}</span>
+                  <img className="side-ic" src={ICON_SRC[it.id]} alt="" /><span className="side-nome">{it.nome}</span>
                 </button>
               ))}
             </div>

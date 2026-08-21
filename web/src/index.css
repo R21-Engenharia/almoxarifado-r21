@@ -45,7 +45,8 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
   color: var(--muted); padding: 9px 10px; border-radius: 9px; text-align: left; font-size: 14px; }
 .side-item:hover { background: #ffffff0d; color: var(--text); }
 .side-item.on { background: var(--accent); color: #fff; }
-.side-ic { font-size: 15px; width: 20px; text-align: center; }
+.side-ic { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; border-radius: 5px; display: block; }
+.side-item.on .side-ic { filter: drop-shadow(0 0 3px #0006); }
 .side-perfil { display: flex; align-items: center; gap: 9px; width: 100%; background: #ffffff0a;
   border: 1px solid var(--line); border-radius: 10px; padding: 8px; color: var(--text); margin-top: 8px; }
 .side-perfil .side-nome { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
