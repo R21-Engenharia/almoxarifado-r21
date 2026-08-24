@@ -57,22 +57,29 @@ def _base_bulk() -> str:
     return f"https://api.sienge.com.br/{sub}/public/api/bulk-data/v1"
 
 
-def coletar_orcamento_wbs(building_id: int) -> dict[str, dict]:
-    """Mapa das subetapas (WBS) do orçamento da obra, via v1 (planilhas/itens):
-    wbsCode -> {descricao, unidade, qtd_orcada, medido}. Percorre as planilhas
-    ativas e pagina os itens. (v1 evita o rate-limit da bulk-data.)"""
+def coletar_orcamento_wbs(building_id: int) -> dict:
+    """Mapa das subetapas (WBS) do orçamento da obra, POR UNIDADE CONSTRUTIVA (sheet):
+    {"ucs": {sheetId: nome}, "wbs": {sheetId: {wbsCode: {descricao, unidade, qtd_orcada, medido}}}}.
+
+    IMPORTANTE: o mesmo wbsCode existe em UCs diferentes (ex.: Custos Diretos x
+    Indiretos) com significados diferentes. Por isso a chave é (buildingUnitId, wbsCode)
+    e a apropriação tem que ser resolvida pela UC (buildingUnitId), senão mostra a
+    subetapa errada. (v1 evita o rate-limit da bulk-data.)"""
     import time
-    mapa: dict[str, dict] = {}
+    ucs: dict[str, str] = {}
+    wbs: dict[str, dict] = {}
     with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
         sheets = c.get(f"{_base_v1()}/building-cost-estimations/{building_id}/sheets").json().get("results", [])
         for s in sheets:
             if (s.get("status") or "").upper() == "LOCKED":
                 continue
-            sid = s["id"]
+            sid = str(s["id"])
+            ucs[sid] = s.get("description")
+            porcode = wbs.setdefault(sid, {})
             offset = 0
             while True:
                 for _try in range(4):
-                    r = c.get(f"{_base_v1()}/building-cost-estimations/{building_id}/sheets/{sid}/items",
+                    r = c.get(f"{_base_v1()}/building-cost-estimations/{building_id}/sheets/{s['id']}/items",
                               params={"limit": 200, "offset": offset})
                     if r.status_code == 429:
                         time.sleep(8); continue
@@ -82,7 +89,7 @@ def coletar_orcamento_wbs(building_id: int) -> dict[str, dict]:
                 for it in res:
                     code = it.get("wbsCode")
                     if code:
-                        mapa[str(code)] = {
+                        porcode[str(code)] = {
                             "descricao": it.get("description"),
                             "unidade": it.get("unitOfMeasure"),
                             "qtd_orcada": it.get("quantity"),
@@ -92,7 +99,7 @@ def coletar_orcamento_wbs(building_id: int) -> dict[str, dict]:
                 offset += 200
                 if offset >= total or not res:
                     break
-    return mapa
+    return {"ucs": ucs, "wbs": wbs}
 
 
 def coletar_movimentos(building_id: int, start_date: str | None = None,

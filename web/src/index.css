@@ -255,6 +255,8 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .wbs { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--accent);
   background: #e2231a14; border: 1px solid #e2231a2e; border-radius: 5px; padding: 1px 6px; align-self: flex-start;
   letter-spacing: .02em; }
+.uc-tag { align-self: flex-start; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
 .ctx-sub-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
 .ctx-sub-nums b { color: var(--text); font-variant-numeric: tabular-nums; display: block; }
 @media (max-width: 560px) { .ctx-sub-nums { grid-template-columns: repeat(2, 1fr); } }

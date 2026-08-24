@@ -21,7 +21,7 @@ export interface ConsumoKpis {
 export interface ConsumoData { hoje: string; kpis: ConsumoKpis; serie: ConsumoMes[]; top: ConsumoItem[] }
 
 export interface SubetapaOrcada {
-  sheet_item_id: number | null; building_unit_id: number | null
+  sheet_item_id: number | null; building_unit_id: number | null; uc_nome: string | null
   wbs_code: string; descricao: string; qtd_orcada: number | null; apropriado_nf: number | null
 }
 export interface InsumoOrcamento {
@@ -40,6 +40,7 @@ export interface SolicSienge {
 }
 export interface ItemSubetapa {
   wbs_code: string; descricao: string; percentual: number | null
+  uc_id: number | null; uc_nome: string | null
 }
 
 export interface RecebFila {

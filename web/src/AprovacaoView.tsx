@@ -10,6 +10,9 @@ import {
 
 type Aba = SolicStatus | 'todas'
 
+// "Cape Town - Custos Diretos" -> "Custos Diretos" (mostra só a UC)
+const ucCurta = (s: string) => { const p = s.split(' - '); return p.length > 1 ? p.slice(1).join(' - ') : s }
+
 // linha da tabela = 1 solicitação do Sienge + o estado da aprovação no BOX21
 interface Linha {
   pr: number
@@ -179,7 +182,7 @@ function DetalheModal({ l, obraNome, podeEng, podePlan, onAcao, onFechar }: {
     } catch (e) { setErro(e instanceof Error ? e.message : String(e)); setProc(false) }
   }
 
-  const algumaDivergencia = ctx.some(c => c.subs.some(s => c.orc && !c.orc.subetapas.find(o => o.wbs_code === s.wbs_code)))
+  const algumaDivergencia = ctx.some(c => c.subs.some(s => c.orc && !c.orc.subetapas.find(o => o.wbs_code === s.wbs_code && o.building_unit_id === s.uc_id)))
 
   return (
     <div className="modal" onClick={() => !proc && onFechar()}>
@@ -243,7 +246,7 @@ function ItemCard({ c }: { c: ItemCtx }) {
           <div className="ctx-subs">
             {subs.length === 0 && <div className="meta">Sem apropriação de subetapa informada na solicitação.</div>}
             {subs.map((s, i) => {
-              const oSub = orc?.subetapas.find(o => o.wbs_code === s.wbs_code) || null
+              const oSub = orc?.subetapas.find(o => o.wbs_code === s.wbs_code && o.building_unit_id === s.uc_id) || null
               const pct = s.percentual ?? 0
               const solicitado = item.quantidade * pct / 100
               const orcado = oSub?.qtd_orcada ?? null
@@ -257,6 +260,7 @@ function ItemCard({ c }: { c: ItemCtx }) {
                       <code className="wbs">{s.wbs_code}</code>
                       <span>{s.descricao && s.descricao !== s.wbs_code ? s.descricao : 'sem descrição no orçamento'}
                         {pct !== 100 ? <span className="meta"> · {num(pct, 0)}%</span> : null}</span>
+                      {s.uc_nome && <span className="uc-tag">{ucCurta(s.uc_nome)}</span>}
                     </span>
                     {div && <span className="pill ruptura" style={{ fontSize: 10, flexShrink: 0 }}>não orçado aqui</span>}
                   </div>

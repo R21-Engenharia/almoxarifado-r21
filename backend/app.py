@@ -341,8 +341,26 @@ def _wbs_map(prevision_id: str) -> dict:
         try:
             _WBS_CACHE[prevision_id] = json.load(open(p, encoding="utf-8"))
         except Exception:
-            _WBS_CACHE[prevision_id] = {}
+            _WBS_CACHE[prevision_id] = {"ucs": {}, "wbs": {}}
     return _WBS_CACHE[prevision_id]
+
+
+def _resolver_wbs(mapa: dict, building_unit_id, code) -> dict:
+    """Resolve (descrição, unidade, qtd_orçada, UC) considerando a UNIDADE CONSTRUTIVA.
+    O mesmo wbsCode existe em UCs diferentes — sem a UC certa, mostra subetapa errada."""
+    ucs = mapa.get("ucs", {})
+    wbs = mapa.get("wbs", {})
+    uc = str(building_unit_id) if building_unit_id is not None else None
+    info = {}
+    if uc is not None:
+        info = (wbs.get(uc) or {}).get(str(code)) or {}
+    if not info:  # fallback: procura o código em qualquer UC (não deixa sem descrição)
+        for sid, codes in wbs.items():
+            if str(code) in codes:
+                info = codes[str(code)]
+                uc = uc or sid
+                break
+    return {"info": info, "uc_id": building_unit_id, "uc_nome": ucs.get(uc) if uc else None}
 
 
 @app.get("/api/aprovacao/insumo-orcamento")
@@ -357,12 +375,13 @@ def insumo_orcamento(obra: str = Query(...), resource_id: str = Query(...),
     subetapas = []
     for a in aprop:
         code = a.get("costEstimationItemReference")
-        info = wbs.get(str(code), {})
+        r = _resolver_wbs(wbs, a.get("buildingUnitId"), code)
         subetapas.append({
             "sheet_item_id": a.get("sheetItemId"),
             "building_unit_id": a.get("buildingUnitId"),
+            "uc_nome": r["uc_nome"],
             "wbs_code": code,
-            "descricao": info.get("descricao") or code,
+            "descricao": r["info"].get("descricao") or code,
             "qtd_orcada": a.get("quantity"),
             "apropriado_nf": None,   # preenchido pelo coletor de NF (fase 2)
         })
@@ -436,7 +455,9 @@ def item_subetapa(obra: str = Query(...), pr_id: int = Query(...), item_number: 
     subs = []
     for a in sienge.solic_item_apropriacao(pr_id, item_number):
         code = a.get("costEstimationItemReference")
-        subs.append({"wbs_code": code, "descricao": (wbs.get(str(code)) or {}).get("descricao") or code,
+        r = _resolver_wbs(wbs, a.get("buildingUnitId"), code)
+        subs.append({"wbs_code": code, "descricao": r["info"].get("descricao") or code,
+                     "uc_id": a.get("buildingUnitId"), "uc_nome": r["uc_nome"],
                      "percentual": a.get("percentage")})
     return {"subetapas": subs}
 
