@@ -42,6 +42,28 @@ export interface ItemSubetapa {
   wbs_code: string; descricao: string; percentual: number | null
 }
 
+export interface RecebFila {
+  pedido_id: number; numero: string; data: string | null; dias_aberto: number | null
+  fornecedor: string; valor: number; status: string; parcial: boolean; atrasado: boolean; comprador: string | null
+}
+export interface RecebLog {
+  data: string; nf: string; fornecedor: string; resource_id: string; descricao: string
+  quantidade: number; unidade: string; valor: number; preco_unit: number | null
+}
+export interface RecebLead { fornecedor: string; n_receb: number; lead_mediano: number; lead_min: number; lead_max: number }
+export interface RecebReaj {
+  resource_id: string; descricao: string; unidade: string; preco_ant: number; preco_novo: number
+  var_pct: number; data_ant: string; data_novo: string; forn_ant: string; forn_novo: string; mesmo_forn: boolean
+}
+export interface RecebimentosData {
+  hoje: string
+  kpis: {
+    n_pendentes: number; valor_pendente: number; n_atrasados: number; valor_atrasado: number
+    recebido_30d: number; n_recebido_30d: number; lead_time_mediano: number | null; n_reajustes: number
+  }
+  fila: RecebFila[]; lead_fornecedores: RecebLead[]; recebimentos: RecebLog[]; reajustes: RecebReaj[]
+}
+
 export interface FornecedorItem {
   supplier_id: string; nome: string; n_pedidos: number; valor_total: number
   n_atrasados: number; n_autorizados: number; ultimo_pedido: string | null
@@ -168,6 +190,8 @@ export const api = {
     req<ConsumoData>(`/api/estoque/consumo?obra=${obra}&meses=${meses}`),
   fornecedores: (obra: string, meses = 12) =>
     req<FornecedoresData>(`/api/estoque/fornecedores?obra=${obra}&meses=${meses}`),
+  recebimentos: (obra: string, meses = 12) =>
+    req<RecebimentosData>(`/api/estoque/recebimentos?obra=${obra}&meses=${meses}`),
   atualizarPedidos: (obra: string) =>
     req<{ ok: boolean; rodando?: boolean; atual?: number }>(`/api/estoque/pedidos/atualizar?obra=${obra}`, { method: 'POST' }),
   posicao: (obra: string, nivel: 'grupo' | 'familia' | 'macro' = 'macro', detalhe = false) =>

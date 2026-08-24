@@ -346,6 +346,169 @@ def fornecedores(pedidos: list[dict], nomes: dict[str, str] | None = None,
     }
 
 
+def _mediana(xs: list) -> float | None:
+    n = len(xs)
+    if not n:
+        return None
+    xs = sorted(xs)
+    m = n // 2
+    return xs[m] if n % 2 else (xs[m - 1] + xs[m]) / 2
+
+
+def recebimentos(pedidos: list[dict], movimentos: list[dict],
+                 nomes: dict[str, str] | None = None, hoje: date | None = None,
+                 meses: int = 12) -> dict:
+    """Recebimento & Conferência a partir de dados REAIS do Sienge:
+      - pedidos (purchase-orders): status de entrega + valor em risco (fila pendente/atrasado)
+      - movimentos de entrada tipo 'Compra' (inventory-movements): o que FISICAMENTE chegou,
+        já com NF (nº), fornecedor, insumo, quantidade e valor -> físico + nota num registro.
+    Deriva: fila pendente/atrasada, lead time estimado (pedido->recebimento) por fornecedor,
+    log de recebimentos e reajuste silencioso (variação de preço do insumo entre recebimentos)."""
+    import bisect
+    hoje = hoje or date.today()
+    nomes = nomes or {}
+
+    def nome(sid) -> str:
+        return nomes.get(str(sid)) or f"Fornecedor {sid}"
+
+    # ---- recebimentos físicos: INPUT tipo 'Compra' (o que chegou = físico + nota) ----
+    receb: list[dict] = []
+    for m in movimentos:
+        if m.get("inputOutput") != "INPUT" or (m.get("movementTypeDescription") or "") != "Compra":
+            continue
+        dt = _parse_data(m.get("movementDate"))
+        if not dt:
+            continue
+        qtd = float(m.get("movementQuantity") or 0)
+        val = float(m.get("movementValue") or 0)
+        receb.append({
+            "data": dt.isoformat(), "_dt": dt,
+            "nf": (f'{(m.get("documentId") or "").strip()} {(m.get("movementNumber") or "").strip()}').strip(),
+            "supplier_id": str(m.get("supplierId") or ""),
+            "fornecedor": (m.get("supplierName") or nome(m.get("supplierId"))).strip(),
+            "resource_id": str(m.get("resourceId") or ""),
+            "descricao": (m.get("resourceDescription") or "").strip(),
+            "quantidade": qtd,
+            "unidade": m.get("unitOfMeasureSymbol") or m.get("unitOfMeasure") or "",
+            "valor": round(val, 2),
+            "preco_unit": round(val / qtd, 4) if qtd else None,
+        })
+    receb.sort(key=lambda r: r["data"], reverse=True)
+    d30 = hoje - timedelta(days=30)
+    val_30 = round(sum(r["valor"] for r in receb if r["_dt"] >= d30), 2)
+    n_30 = sum(1 for r in receb if r["_dt"] >= d30)
+
+    # ---- fila pendente / atrasada (cabeçalhos de pedido autorizado) ----
+    fila: list[dict] = []
+    valor_pend = valor_atras = 0.0
+    n_atras = 0
+    for p in pedidos:
+        if not p.get("authorized"):
+            continue
+        status = (p.get("status") or "").upper()
+        if status in ("CANCELED", "FULLY_DELIVERED"):
+            continue
+        dt = _parse_data(p.get("date"))
+        val = float(p.get("totalAmount") or 0)
+        late = bool(p.get("deliveryLate"))
+        fila.append({
+            "pedido_id": p.get("id"),
+            "numero": p.get("formattedPurchaseOrderId") or str(p.get("id")),
+            "data": dt.isoformat() if dt else None,
+            "dias_aberto": (hoje - dt).days if dt else None,
+            "fornecedor": nome(p.get("supplierId")),
+            "valor": round(val, 2),
+            "status": status or "PENDING",
+            "parcial": status == "PARTIALLY_DELIVERED",
+            "atrasado": late,
+            "comprador": p.get("buyerId"),
+        })
+        valor_pend += val
+        if late:
+            n_atras += 1
+            valor_atras += val
+    fila.sort(key=lambda x: (not x["atrasado"], -(x["dias_aberto"] or 0)))
+
+    # ---- lead time estimado (pedido -> recebimento) por fornecedor ----
+    pos_forn: dict[str, list] = defaultdict(list)
+    for p in pedidos:
+        dt = _parse_data(p.get("date"))
+        if dt and p.get("authorized"):
+            pos_forn[str(p.get("supplierId") or "")].append(dt)
+    for k in pos_forn:
+        pos_forn[k].sort()
+    lead_forn: dict[str, list] = defaultdict(list)
+    for r in receb:
+        datas = pos_forn.get(r["supplier_id"])
+        if not datas:
+            continue
+        i = bisect.bisect_right(datas, r["_dt"]) - 1
+        if i < 0:
+            continue
+        lead = (r["_dt"] - datas[i]).days
+        if 0 <= lead <= 180:
+            lead_forn[r["supplier_id"]].append(lead)
+    leads: list[dict] = []
+    todos: list[int] = []
+    for sid, ls in lead_forn.items():
+        if len(ls) < 2:
+            continue
+        todos += ls
+        leads.append({"fornecedor": nome(sid), "n_receb": len(ls),
+                      "lead_mediano": round(_mediana(ls), 1),
+                      "lead_min": min(ls), "lead_max": max(ls)})
+    leads.sort(key=lambda x: -x["lead_mediano"])
+    lead_geral = round(_mediana(todos), 1) if todos else None
+
+    # ---- reajuste silencioso: variação de preço do MESMO insumo entre recebimentos ----
+    # compara os 2 recebimentos mais recentes do insumo, com guardas contra ruído:
+    # mesma unidade (evita cx×un), preço-base sadio, alta relevante e não-absurda,
+    # e o recebimento novo dentro da janela analisada.
+    ini_iso = (hoje - timedelta(days=meses * 31)).isoformat()
+    por_ins: dict[str, list] = defaultdict(list)
+    for r in receb:
+        if r["preco_unit"] and r["preco_unit"] >= 0.10:
+            por_ins[r["resource_id"]].append(r)
+    reaj: list[dict] = []
+    for rid, rs in por_ins.items():
+        if len(rs) < 2:
+            continue
+        rs2 = sorted(rs, key=lambda x: x["data"])
+        ant, novo = rs2[-2], rs2[-1]
+        if novo["data"] < ini_iso:
+            continue
+        if ant["unidade"] != novo["unidade"]:
+            continue
+        var = (novo["preco_unit"] - ant["preco_unit"]) / ant["preco_unit"] * 100
+        if var < 8 or var > 300:
+            continue
+        reaj.append({
+            "resource_id": rid, "descricao": novo["descricao"], "unidade": novo["unidade"],
+            "preco_ant": round(ant["preco_unit"], 2), "preco_novo": round(novo["preco_unit"], 2),
+            "var_pct": round(var, 1), "data_ant": ant["data"], "data_novo": novo["data"],
+            "forn_ant": ant["fornecedor"], "forn_novo": novo["fornecedor"],
+            "mesmo_forn": ant["supplier_id"] == novo["supplier_id"],
+        })
+    reaj.sort(key=lambda x: -x["var_pct"])
+
+    for r in receb:
+        r.pop("_dt", None)
+
+    return {
+        "hoje": hoje.isoformat(),
+        "kpis": {
+            "n_pendentes": len(fila), "valor_pendente": round(valor_pend, 2),
+            "n_atrasados": n_atras, "valor_atrasado": round(valor_atras, 2),
+            "recebido_30d": val_30, "n_recebido_30d": n_30,
+            "lead_time_mediano": lead_geral, "n_reajustes": len(reaj),
+        },
+        "fila": fila,
+        "lead_fornecedores": leads[:30],
+        "recebimentos": receb[:60],
+        "reajustes": reaj[:40],
+    }
+
+
 def consumo(movimentos: list[dict], hoje: date | None = None, meses: int = 12) -> dict:
     """Módulo Consumo: série mensal de consumo (R$, só tipo Consumo), KPIs de
     ritmo/tendência e ranking dos insumos que mais consomem capital."""

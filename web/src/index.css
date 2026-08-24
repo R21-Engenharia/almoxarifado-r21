@@ -229,6 +229,11 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .ctx-time { margin: 8px 0 4px; }
 .ctx-ev { display: flex; gap: 10px; padding: 6px 0; }
 .ctx-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex-shrink: 0; }
+/* barra de lead time (faixa mín–máx + mediana) */
+.lead-bar { position: relative; height: 6px; background: var(--panel2); border-radius: 3px; min-width: 120px; margin-bottom: 4px; }
+.lead-bar span { position: absolute; top: 0; bottom: 0; background: #e2231a55; border-radius: 3px; }
+.lead-bar i { position: absolute; top: -2px; width: 3px; height: 10px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px #e2231aaa; transform: translateX(-50%); }
+
 .ctx-itens { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
 .ctx-item { background: var(--sidebar); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
 .ctx-item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }

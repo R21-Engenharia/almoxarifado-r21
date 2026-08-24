@@ -287,6 +287,14 @@ def fornecedores(obra: str = Query(...), meses: int = 12,
                                hoje=date.today(), meses=meses)
 
 
+@app.get("/api/estoque/recebimentos")
+def recebimentos(obra: str = Query(...), meses: int = 12,
+                 usuario: str = Depends(usuario_logado)):
+    obra_ou_erro(obra)
+    return engine.recebimentos(_pedidos(obra), _movimentos(obra),
+                               _nomes_fornecedores(obra), hoje=date.today(), meses=meses)
+
+
 # ---- aprovação: contexto orçamento × apropriação ---------------------------
 _WBS_CACHE: dict[str, dict] = {}
 

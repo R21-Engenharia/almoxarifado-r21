@@ -11,6 +11,7 @@ import Posicao from './Posicao'
 import Consumo from './Consumo'
 import Requisicao from './Requisicao'
 import Fornecedores from './Fornecedores'
+import Recebimentos from './Recebimentos'
 import Equipamentos from './EquipamentosView'
 import Aprovacoes from './AprovacaoView'
 import ModuloEmBreve, { MODULOS } from './ModuloEmBreve'
@@ -187,6 +188,7 @@ export default function App() {
         <main className="area">
           {!obra && !erroAcesso && <Loader label={TITULOS[secao].t.toLowerCase()} dica="Conectando ao Sienge e listando as obras…" />}
           {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
+          {obra && secao === 'recebimentos' && <Recebimentos obra={obra} />}
           {obra && secao === 'posicao' && <Posicao obra={obra} />}
           {obra && secao === 'consumo' && <Consumo obra={obra} />}
           {obra && secao === 'fornecedores' && <Fornecedores obra={obra} />}
@@ -196,7 +198,7 @@ export default function App() {
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
           {obra && secao === 'historico' && <Historico obra={obra} />}
-          {['recebimentos', 'suprimentos'].includes(secao) &&
+          {secao === 'suprimentos' &&
             <ModuloEmBreve spec={MODULOS[secao]} />}
         </main>
       </div>
