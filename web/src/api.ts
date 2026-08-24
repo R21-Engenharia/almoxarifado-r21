@@ -64,6 +64,26 @@ export interface RecebimentosData {
   fila: RecebFila[]; lead_fornecedores: RecebLead[]; recebimentos: RecebLog[]; reajustes: RecebReaj[]
 }
 
+export interface SupItem {
+  resource_id: string; descricao: string; unidade: string; macro: string
+  saldo: number; consumo_dia: number; custo_unit: number; cobertura_dias: number; data_ruptura: string | null
+  fornecedor: string | null; lead_dias: number; pct_no_prazo: number
+  ss_dias: number; protecao_dias: number; rop_qtd: number
+  dias_ate_pedir: number; data_limite: string
+  qtd_sugerida: number; valor_sugerido: number
+  custo_antecipar_dia: number; exposicao_parada_dia: number
+  urgencia: 'comprar_agora' | 'esta_semana' | 'programar' | 'ok'
+}
+export interface SuprimentosData {
+  hoje: string
+  parametros: { cobertura_alvo_dias: number; selic_anual_pct: number }
+  kpis: {
+    n_comprar_agora: number; valor_comprar_agora: number; n_esta_semana: number; valor_esta_semana: number
+    n_itens: number; valor_total_sugerido: number; economia_selic_mes: number; exposicao_parada_dia: number
+  }
+  itens: SupItem[]
+}
+
 export interface FornecedorItem {
   supplier_id: string; nome: string; n_pedidos: number; valor_total: number
   n_atrasados: number; n_autorizados: number; ultimo_pedido: string | null
@@ -192,6 +212,8 @@ export const api = {
     req<FornecedoresData>(`/api/estoque/fornecedores?obra=${obra}&meses=${meses}`),
   recebimentos: (obra: string, meses = 12) =>
     req<RecebimentosData>(`/api/estoque/recebimentos?obra=${obra}&meses=${meses}`),
+  suprimentos: (obra: string, coberturaAlvo = 45) =>
+    req<SuprimentosData>(`/api/estoque/suprimentos?obra=${obra}&cobertura_alvo=${coberturaAlvo}`),
   atualizarPedidos: (obra: string) =>
     req<{ ok: boolean; rodando?: boolean; atual?: number }>(`/api/estoque/pedidos/atualizar?obra=${obra}`, { method: 'POST' }),
   posicao: (obra: string, nivel: 'grupo' | 'familia' | 'macro' = 'macro', detalhe = false) =>

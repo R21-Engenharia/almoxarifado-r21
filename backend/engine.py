@@ -509,6 +509,97 @@ def recebimentos(pedidos: list[dict], movimentos: list[dict],
     }
 
 
+def suprimentos(itens: list[dict], lead_fornecedores: list[dict],
+                scorecard: list[dict], hoje: date | None = None,
+                cobertura_alvo: int = 45, lead_padrao: int = 10) -> dict:
+    """MRP preditivo: para cada insumo ATIVO, calcula o ponto de pedido com o
+    lead time REAL do fornecedor e um estoque de segurança que cresce com a
+    falta de confiabilidade do fornecedor. Sai a lista 'comprar até o dia X,
+    quantidade Y' e o trade-off em R$ (imobilizar cedo × risco de faltar).
+
+    Tudo vem de dados reais já calculados:
+      - itens: saída de analisar() (saldo, consumo_dia, custo_unit, cobertura, ruptura, fornecedores)
+      - lead_fornecedores: de recebimentos() (lead mediano pedido->entrega por fornecedor)
+      - scorecard: de fornecedores() (% no prazo por fornecedor)
+    """
+    hoje = hoje or date.today()
+    lead_map = {l["fornecedor"]: l["lead_mediano"] for l in lead_fornecedores}
+    leads_todos = [l["lead_mediano"] for l in lead_fornecedores]
+    lead_geral = _mediana(leads_todos) if leads_todos else lead_padrao
+    rel_map = {s["nome"]: s.get("pct_no_prazo", 100.0) for s in scorecard}
+    selic_dia = SELIC_ANUAL / 365
+    selic_mes = SELIC_ANUAL / 12
+
+    URG = {"comprar_agora": 0, "esta_semana": 1, "programar": 2, "ok": 3}
+    lista: list[dict] = []
+    for it in itens:
+        cd = it.get("consumo_dia") or 0
+        cobertura = it.get("cobertura_dias")
+        if cd <= 0 or cobertura is None:
+            continue  # sem consumo recente -> não entra no MRP (é capital parado, outro módulo)
+        saldo = it.get("saldo") or 0
+        custo = it.get("custo_unit") or 0
+        forns = it.get("fornecedores") or []
+        # fornecedor de referência: o que tem lead conhecido; senão o primeiro
+        forn = next((f for f in forns if f in lead_map), forns[0] if forns else None)
+        lead = lead_map.get(forn, lead_geral) or lead_padrao
+        pct_prazo = rel_map.get(forn, 85.0)
+        pct_atraso = max(0.0, 100 - pct_prazo)
+        # estoque de segurança (em dias): cresce com o lead e com o histórico de atraso
+        ss_dias = max(2, round(lead * (0.25 + pct_atraso / 100)))
+        protecao = lead + ss_dias                      # dias que o estoque precisa cobrir
+        dias_ate_pedir = round(cobertura - protecao, 1)  # <=0 => já passou do ponto
+        limite = (hoje + timedelta(days=int(dias_ate_pedir))).isoformat()
+        rop_qtd = round(cd * protecao, 2)              # ponto de pedido (quantidade)
+        qtd_sugerida = max(0.0, round(cd * (protecao + cobertura_alvo) - saldo, 2))
+        valor_sugerido = round(qtd_sugerida * custo, 2)
+        custo_antecipar_dia = round(valor_sugerido * selic_dia, 2)  # R$/dia preso se comprar cedo
+        exposicao_parada_dia = it.get("impacto_dia") or 0          # R$/dia em risco se parar
+
+        if dias_ate_pedir <= 0:
+            urg = "comprar_agora"
+        elif dias_ate_pedir <= 7:
+            urg = "esta_semana"
+        elif dias_ate_pedir <= cobertura_alvo:
+            urg = "programar"
+        else:
+            urg = "ok"
+
+        lista.append({
+            "resource_id": it["resource_id"], "descricao": it["descricao"],
+            "unidade": it.get("unidade", ""), "macro": it.get("macro", ""),
+            "saldo": saldo, "consumo_dia": round(cd, 3), "custo_unit": round(custo, 4),
+            "cobertura_dias": cobertura, "data_ruptura": it.get("data_ruptura"),
+            "fornecedor": forn, "lead_dias": round(lead, 1), "pct_no_prazo": round(pct_prazo, 1),
+            "ss_dias": ss_dias, "protecao_dias": protecao,
+            "rop_qtd": rop_qtd, "dias_ate_pedir": dias_ate_pedir, "data_limite": limite,
+            "qtd_sugerida": qtd_sugerida, "valor_sugerido": valor_sugerido,
+            "custo_antecipar_dia": custo_antecipar_dia, "exposicao_parada_dia": round(exposicao_parada_dia, 2),
+            "urgencia": urg,
+        })
+
+    lista.sort(key=lambda x: (URG[x["urgencia"]], x["dias_ate_pedir"], -x["exposicao_parada_dia"]))
+
+    agora = [x for x in lista if x["urgencia"] == "comprar_agora"]
+    semana = [x for x in lista if x["urgencia"] == "esta_semana"]
+    nao_urgente = [x for x in lista if x["urgencia"] in ("programar", "ok")]
+    valor_total = round(sum(x["valor_sugerido"] for x in lista), 2)
+    economia_mes = round(sum(x["valor_sugerido"] for x in nao_urgente) * selic_mes, 2)
+
+    return {
+        "hoje": hoje.isoformat(),
+        "parametros": {"cobertura_alvo_dias": cobertura_alvo, "selic_anual_pct": round(SELIC_ANUAL * 100, 2)},
+        "kpis": {
+            "n_comprar_agora": len(agora), "valor_comprar_agora": round(sum(x["valor_sugerido"] for x in agora), 2),
+            "n_esta_semana": len(semana), "valor_esta_semana": round(sum(x["valor_sugerido"] for x in semana), 2),
+            "n_itens": len(lista), "valor_total_sugerido": valor_total,
+            "economia_selic_mes": economia_mes,
+            "exposicao_parada_dia": round(sum(x["exposicao_parada_dia"] for x in agora), 2),
+        },
+        "itens": lista[:250],
+    }
+
+
 def consumo(movimentos: list[dict], hoje: date | None = None, meses: int = 12) -> dict:
     """Módulo Consumo: série mensal de consumo (R$, só tipo Consumo), KPIs de
     ritmo/tendência e ranking dos insumos que mais consomem capital."""

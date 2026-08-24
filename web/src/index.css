@@ -229,6 +229,9 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .ctx-time { margin: 8px 0 4px; }
 .ctx-ev { display: flex; gap: 10px; padding: 6px 0; }
 .ctx-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex-shrink: 0; }
+.sup-rup { color: var(--ruptura); font-weight: 700; }
+.sup-tbl td { vertical-align: top; }
+
 /* barra de lead time (faixa mín–máx + mediana) */
 .lead-bar { position: relative; height: 6px; background: var(--panel2); border-radius: 3px; min-width: 120px; margin-bottom: 4px; }
 .lead-bar span { position: absolute; top: 0; bottom: 0; background: #e2231a55; border-radius: 3px; }

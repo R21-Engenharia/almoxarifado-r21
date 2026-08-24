@@ -295,6 +295,19 @@ def recebimentos(obra: str = Query(...), meses: int = 12,
                                _nomes_fornecedores(obra), hoje=date.today(), meses=meses)
 
 
+@app.get("/api/estoque/suprimentos")
+def suprimentos(obra: str = Query(...), cobertura_alvo: int = 45,
+                usuario: str = Depends(usuario_logado)):
+    """MRP preditivo: junta a análise de consumo (ruptura por insumo), o lead time
+    real por fornecedor (recebimentos) e o % no prazo (fornecedores)."""
+    obra_ou_erro(obra)
+    nomes = _nomes_fornecedores(obra)
+    receb = engine.recebimentos(_pedidos(obra), _movimentos(obra), nomes, hoje=date.today())
+    forn = engine.fornecedores(_pedidos(obra), nomes, hoje=date.today())
+    return engine.suprimentos(_analise(obra)["itens"], receb["lead_fornecedores"],
+                              forn["fornecedores"], hoje=date.today(), cobertura_alvo=cobertura_alvo)
+
+
 # ---- aprovação: contexto orçamento × apropriação ---------------------------
 _WBS_CACHE: dict[str, dict] = {}
 
