@@ -295,6 +295,29 @@ def recebimentos(obra: str = Query(...), meses: int = 12,
                                _nomes_fornecedores(obra), hoje=date.today(), meses=meses)
 
 
+@app.get("/api/estoque/pedido-itens")
+def pedido_itens(obra: str = Query(...), pedido_id: int = Query(...),
+                 usuario: str = Depends(usuario_logado)):
+    """Itens de um pedido de compra (para abrir a solicitação da fila de recebimentos)."""
+    obra_ou_erro(obra)
+    if _modo_demo():
+        return {"itens": []}
+    out = []
+    for it in sienge.pedido_itens(pedido_id):
+        qtd = float(it.get("quantity") or 0)
+        preco = float(it.get("netPrice") or it.get("unitPrice") or 0)
+        out.append({
+            "resource_id": str(it.get("resourceId") or ""),
+            "descricao": (it.get("resourceDescription") or "").strip(),
+            "detalhe": (it.get("detailDescription") or "").strip(),
+            "quantidade": qtd,
+            "unidade": it.get("unitOfMeasure") or "",
+            "preco_unit": round(preco, 4),
+            "valor": round(qtd * preco, 2),
+        })
+    return {"itens": out}
+
+
 @app.get("/api/estoque/suprimentos")
 def suprimentos(obra: str = Query(...), cobertura_alvo: int = 45,
                 usuario: str = Depends(usuario_logado)):

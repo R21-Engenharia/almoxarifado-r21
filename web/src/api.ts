@@ -50,6 +50,10 @@ export interface RecebLog {
   data: string; nf: string; fornecedor: string; resource_id: string; descricao: string
   quantidade: number; unidade: string; valor: number; preco_unit: number | null
 }
+export interface PedidoItem {
+  resource_id: string; descricao: string; detalhe: string
+  quantidade: number; unidade: string; preco_unit: number; valor: number
+}
 export interface RecebLead { fornecedor: string; n_receb: number; lead_mediano: number; lead_min: number; lead_max: number }
 export interface RecebReaj {
   resource_id: string; descricao: string; unidade: string; preco_ant: number; preco_novo: number
@@ -212,6 +216,8 @@ export const api = {
     req<FornecedoresData>(`/api/estoque/fornecedores?obra=${obra}&meses=${meses}`),
   recebimentos: (obra: string, meses = 12) =>
     req<RecebimentosData>(`/api/estoque/recebimentos?obra=${obra}&meses=${meses}`),
+  pedidoItens: (obra: string, pedidoId: number) =>
+    req<{ itens: PedidoItem[] }>(`/api/estoque/pedido-itens?obra=${obra}&pedido_id=${pedidoId}`),
   suprimentos: (obra: string, coberturaAlvo = 45) =>
     req<SuprimentosData>(`/api/estoque/suprimentos?obra=${obra}&cobertura_alvo=${coberturaAlvo}`),
   atualizarPedidos: (obra: string) =>

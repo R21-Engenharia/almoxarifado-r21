@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, brl, num, type RecebimentosData } from './api'
+import { api, brl, num, type RecebimentosData, type RecebFila, type PedidoItem } from './api'
 import Loader from './Loader'
 
 type Aba = 'fila' | 'recebidos' | 'lead' | 'reajuste'
@@ -10,6 +10,7 @@ export default function Recebimentos({ obra }: { obra: string }) {
   const [d, setD] = useState<RecebimentosData | null>(null)
   const [err, setErr] = useState('')
   const [aba, setAba] = useState<Aba>('fila')
+  const [pedido, setPedido] = useState<RecebFila | null>(null)
 
   useEffect(() => {
     setD(null); setErr('')
@@ -41,10 +42,57 @@ export default function Recebimentos({ obra }: { obra: string }) {
           <button className={aba === 'reajuste' ? 'on' : ''} onClick={() => setAba('reajuste')}>Reajustes ({k.n_reajustes})</button>
         </div>
 
-        {aba === 'fila' && <FilaTbl d={d} />}
+        {aba === 'fila' && <FilaTbl d={d} onAbrir={setPedido} />}
         {aba === 'recebidos' && <RecebidosTbl d={d} />}
         {aba === 'lead' && <LeadTbl d={d} />}
         {aba === 'reajuste' && <ReajusteTbl d={d} />}
+      </div>
+
+      {pedido && <PedidoModal obra={obra} f={pedido} onFechar={() => setPedido(null)} />}
+    </div>
+  )
+}
+
+/* Detalhe do pedido: os insumos daquela solicitação de compra */
+function PedidoModal({ obra, f, onFechar }: { obra: string; f: RecebFila; onFechar: () => void }) {
+  const [itens, setItens] = useState<PedidoItem[] | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    setItens(null); setErr('')
+    api.pedidoItens(obra, f.pedido_id).then(r => setItens(r.itens)).catch(e => setErr(e instanceof Error ? e.message : String(e)))
+  }, [obra, f.pedido_id])
+  const total = (itens || []).reduce((a, i) => a + i.valor, 0)
+  return (
+    <div className="modal" onClick={onFechar}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 660 }}>
+        <div className="ctx-head">
+          <div><h3 style={{ margin: 0 }}>Pedido #{f.numero}</h3>
+            <div className="chart-sub">{f.fornecedor} · {data(f.data)}{f.comprador ? ` · ${f.comprador}` : ''}</div></div>
+          <span className={`pill ${f.atrasado ? 'ruptura' : f.parcial ? 'baixo' : ''}`}>{f.atrasado ? 'Atrasado' : f.parcial ? 'Parcial' : 'Pendente'}</span>
+        </div>
+        {err && <div className="msg bad" style={{ marginTop: 10 }}>{err}</div>}
+        {!itens && !err && <div className="loading" style={{ padding: 20 }}>Carregando itens do pedido…</div>}
+        {itens && (
+          <div className="tbl-wrap" style={{ marginTop: 12 }}>
+            <table className="tbl">
+              <thead><tr><th>Insumo</th><th className="r">Qtd</th><th className="r">Preço un.</th><th className="r">Valor</th></tr></thead>
+              <tbody>
+                {itens.map((i, n) => (
+                  <tr key={n}>
+                    <td><div className="desc" style={{ fontSize: 13 }}>{i.descricao}</div>
+                      <div className="meta">#{i.resource_id}{i.detalhe ? ` · ${i.detalhe}` : ''}</div></td>
+                    <td className="r">{num(i.quantidade, 2)} {i.unidade}</td>
+                    <td className="r">{brl(i.preco_unit)}</td>
+                    <td className="r">{brl(i.valor)}</td>
+                  </tr>
+                ))}
+                {itens.length === 0 && <tr><td colSpan={4}><div className="empty">Sem itens retornados para este pedido.</div></td></tr>}
+              </tbody>
+              {itens.length > 0 && <tfoot><tr><td colSpan={3} className="r"><b>Total</b></td><td className="r"><b>{brl(total)}</b></td></tr></tfoot>}
+            </table>
+          </div>
+        )}
+        <div className="modal-acts" style={{ marginTop: 12 }}><button className="ghost" onClick={onFechar}>Fechar</button></div>
       </div>
     </div>
   )
@@ -61,14 +109,14 @@ function Kpi({ rot, v, hint, tone }: { rot: string; v: string; hint?: string; to
 }
 
 /* Fila de recebimentos pendentes/atrasados — valor em risco */
-function FilaTbl({ d }: { d: RecebimentosData }) {
+function FilaTbl({ d, onAbrir }: { d: RecebimentosData; onAbrir: (f: RecebFila) => void }) {
   return (
     <div className="tbl-wrap">
       <table className="tbl">
-        <thead><tr><th>Pedido</th><th>Fornecedor</th><th className="r">Aberto há</th><th className="r">Valor</th><th>Situação</th></tr></thead>
+        <thead><tr><th>Pedido</th><th>Fornecedor</th><th className="r">Aberto há</th><th className="r">Valor</th><th>Situação</th><th></th></tr></thead>
         <tbody>
           {d.fila.map(f => (
-            <tr key={f.pedido_id}>
+            <tr key={f.pedido_id} style={{ cursor: 'pointer' }} onClick={() => onAbrir(f)}>
               <td><div className="desc">#{f.numero}</div><div className="meta">{data(f.data)}{f.comprador ? ` · ${f.comprador}` : ''}</div></td>
               <td><div className="desc" style={{ fontSize: 13 }}>{f.fornecedor}</div></td>
               <td className="r">{f.dias_aberto != null ? `${num(f.dias_aberto)} d` : '—'}</td>
@@ -77,9 +125,10 @@ function FilaTbl({ d }: { d: RecebimentosData }) {
                 {f.atrasado && <span className="pill ruptura" style={{ marginRight: 6 }}>Atrasado</span>}
                 <span className={`pill ${f.parcial ? 'baixo' : ''}`}>{f.parcial ? 'Parcial' : 'Pendente'}</span>
               </td>
+              <td className="r"><button className="mini">Ver itens</button></td>
             </tr>
           ))}
-          {d.fila.length === 0 && <tr><td colSpan={5}><div className="empty">Nenhum pedido pendente de recebimento. Tudo entregue. ✓</div></td></tr>}
+          {d.fila.length === 0 && <tr><td colSpan={6}><div className="empty">Nenhum pedido pendente de recebimento. Tudo entregue. ✓</div></td></tr>}
         </tbody>
       </table>
     </div>

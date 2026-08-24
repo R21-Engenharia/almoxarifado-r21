@@ -164,6 +164,15 @@ def solic_header(pr_id: int) -> dict:
     return get_json(f"/purchase-requests/{pr_id}")
 
 
+def pedido_itens(pedido_id: int) -> list[dict]:
+    """Itens de um pedido de compra (purchase-order): insumo, qtd, unidade, preço."""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.get(f"{_base_v1()}/purchase-orders/{pedido_id}/items")
+        if r.status_code != 200:
+            return []
+        return r.json().get("results", []) or []
+
+
 def solic_item_apropriacao(pr_id: int, item_number: int) -> list[dict]:
     """Subetapas (WBS) que o item da solicitação está pedindo: [{costEstimationItemReference, percentage}]."""
     with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
