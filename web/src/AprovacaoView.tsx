@@ -78,7 +78,8 @@ export default function Aprovacoes({ obra, obraNome }: { obra: string; obraNome:
 
   const filtradas = aba === 'todas' ? linhas : linhas.filter(l => l.status === aba)
 
-  if (!authAtiva) return <div className="empty">As aprovações exigem login (Supabase). Rode o app em produção.</div>
+  // em produção exige login; no dev local (sem Supabase) libera pra visualização
+  if (!authAtiva && !import.meta.env.DEV) return <div className="empty">As aprovações exigem login (Supabase). Rode o app em produção.</div>
   if (carregando && !pend.length && !Object.keys(ovs).length)
     return <Loader label="as aprovações" dica="Lendo as solicitações de compra pendentes no Sienge…" />
 
@@ -252,8 +253,12 @@ function ItemCard({ c }: { c: ItemCtx }) {
               return (
                 <div key={i} className="ctx-sub">
                   <div className="ctx-sub-top">
-                    <span>{s.descricao}{pct !== 100 ? <span className="meta"> · {num(pct, 0)}%</span> : null}</span>
-                    {div && <span className="pill ruptura" style={{ fontSize: 10 }}>não orçado aqui</span>}
+                    <span className="ctx-sub-name">
+                      <code className="wbs">{s.wbs_code}</code>
+                      <span>{s.descricao && s.descricao !== s.wbs_code ? s.descricao : 'sem descrição no orçamento'}
+                        {pct !== 100 ? <span className="meta"> · {num(pct, 0)}%</span> : null}</span>
+                    </span>
+                    {div && <span className="pill ruptura" style={{ fontSize: 10, flexShrink: 0 }}>não orçado aqui</span>}
                   </div>
                   <div className="ctx-sub-nums">
                     <span>Solicitado <b>{num(solicitado, 2)}</b></span>

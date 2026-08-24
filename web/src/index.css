@@ -234,7 +234,11 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .ctx-item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .ctx-subs { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .ctx-sub { border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; background: var(--bg); }
-.ctx-sub-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.ctx-sub-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.ctx-sub-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wbs { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--accent);
+  background: #e2231a14; border: 1px solid #e2231a2e; border-radius: 5px; padding: 1px 6px; align-self: flex-start;
+  letter-spacing: .02em; }
 .ctx-sub-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
 .ctx-sub-nums b { color: var(--text); font-variant-numeric: tabular-nums; display: block; }
 @media (max-width: 560px) { .ctx-sub-nums { grid-template-columns: repeat(2, 1fr); } }
@@ -401,7 +405,7 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .modal { position: fixed; inset: 0; background: #000a; display: flex; align-items: center;
   justify-content: center; z-index: 40; padding: 16px; }
 .modal-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
-  padding: 20px; max-width: 460px; width: 100%; }
+  padding: 20px; max-width: 460px; width: 100%; max-height: calc(100vh - 32px); overflow-y: auto; }
 .modal-card h3 { margin: 0 0 6px; }
 .warn-txt { font-size: 13px; color: var(--baixo); margin: 0 0 12px; }
 .conf-list { list-style: none; padding: 0; margin: 0 0 16px; max-height: 40vh; overflow-y: auto; }
