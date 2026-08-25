@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type Conta, type Obra } from './api'
 import { authAtiva } from './supabase'
+import { Avatar } from './PerfilCard'
 import { MODULOS, PERFIS } from './modulos'
 import Loader from './Loader'
 
 type Tab = 'info' | 'perms'
+
+const ROLE_INFO: Record<string, { l: string; bg: string; c: string }> = {
+  admin: { l: 'Admin', bg: '#e2231a22', c: 'var(--accent)' },
+  planejamento: { l: 'Planejamento', bg: '#ff7a1a22', c: 'var(--critico)' },
+  engenheiro: { l: 'Engenheiro', bg: '#2dd4bf22', c: 'var(--entrada)' },
+  user: { l: 'Operacional', bg: '#ffffff10', c: 'var(--muted)' },
+}
+const roleInfo = (r: string) => ROLE_INFO[r] || ROLE_INFO.user
 const ROLES = [
-  { v: 'user', l: 'Sem papel na aprovação' },
-  { v: 'engenheiro', l: 'Engenheiro (1ª aprovação)' },
-  { v: 'planejamento', l: 'Planejamento (2ª aprovação)' },
+  { v: 'user', l: 'Operacional (sem papel na aprovação)' },
+  { v: 'engenheiro', l: 'Engenheiro — 1ª aprovação' },
+  { v: 'planejamento', l: 'Planejamento — 2ª aprovação' },
   { v: 'admin', l: 'Admin' },
 ]
 
@@ -38,44 +47,40 @@ export default function Usuarios({ obras }: { obras: Obra[] }) {
 
   if (!authAtiva && !import.meta.env.DEV) return <div className="empty">A gestão de usuários exige login (Supabase). Rode o app em produção.</div>
   if (carregando) return <Loader label="os usuários" dica="Carregando contas e permissões…" />
+  if (sel || novo) return <Detalhe conta={sel} obras={obras}
+    onSalvo={() => { setSel(null); setNovo(false); carregar() }}
+    onVoltar={() => { setSel(null); setNovo(false) }} />
 
-  if (sel || novo) {
-    return <Detalhe conta={sel} obras={obras}
-      onSalvo={() => { setSel(null); setNovo(false); carregar() }}
-      onVoltar={() => { setSel(null); setNovo(false) }} />
-  }
-
+  const nAtivos = lista.filter(u => u.ativo).length
   return (
-    <div className="dash">
-      <div className="chart-card">
-        <div className="chart-head">
-          <div><h3>Usuários</h3><span className="chart-sub">Contas com acesso ao BOX21 e o que cada uma pode fazer</span></div>
-          <button className="cta" onClick={() => setNovo(true)}>+ Novo usuário</button>
+    <div className="dash usr">
+      <div className="usr-topbar">
+        <div className="usr-busca">
+          <input placeholder="Buscar por nome, e-mail ou cargo…" value={q} onChange={e => setQ(e.target.value)} />
+          <button className={`usr-flt ${soAtivos ? 'on' : ''}`} onClick={() => setSoAtivos(v => !v)}>{soAtivos ? 'Só ativos' : 'Todos'}</button>
         </div>
-        {erro && <div className="msg bad">{erro}</div>}
-        <div className="req-topo" style={{ marginBottom: 12 }}>
-          <input className="busca" placeholder="Buscar por nome, e-mail ou cargo…" value={q} onChange={e => setQ(e.target.value)} />
-          <label className="campo" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <input type="checkbox" checked={soAtivos} onChange={e => setSoAtivos(e.target.checked)} style={{ width: 16, height: 16 }} />
-            <span style={{ margin: 0 }}>Só ativos</span></label>
-        </div>
-        <div className="tbl-wrap">
-          <table className="tbl">
-            <thead><tr><th>Nome · Cargo/Função</th><th>E-mail</th><th>Tipo</th><th>Papel</th><th>Status</th></tr></thead>
-            <tbody>
-              {filtrada.map(u => (
-                <tr key={u.email} style={{ cursor: 'pointer' }} onClick={() => setSel(u)}>
-                  <td><div className="desc">{u.nome || u.email}</div><div className="meta">{u.cargo || '—'}</div></td>
-                  <td><div className="desc" style={{ fontSize: 13 }}>{u.email}</div></td>
-                  <td>{u.tipo}</td>
-                  <td><span className="meta">{ROLES.find(r => r.v === u.role)?.l.split(' (')[0] || u.role}</span></td>
-                  <td><span className={`pill ${u.ativo ? 'ok' : ''}`}>{u.ativo ? 'Ativo' : 'Inativo'}</span></td>
-                </tr>
-              ))}
-              {filtrada.length === 0 && <tr><td colSpan={5}><div className="empty">Nenhum usuário.</div></td></tr>}
-            </tbody>
-          </table>
-        </div>
+        <button className="cta" onClick={() => setNovo(true)}>+ Novo usuário</button>
+      </div>
+      <div className="usr-count">{nAtivos} {nAtivos === 1 ? 'usuário ativo' : 'usuários ativos'}{lista.length > nAtivos ? ` · ${lista.length - nAtivos} inativos` : ''}</div>
+      {erro && <div className="msg bad">{erro}</div>}
+
+      <div className="usr-list">
+        {filtrada.map(u => {
+          const ri = roleInfo(u.role)
+          return (
+            <button key={u.email} className="usr-row" onClick={() => setSel(u)}>
+              <Avatar url={null} nome={u.nome || u.email} size={42} />
+              <div className="usr-id">
+                <div className="usr-nome">{u.nome || u.email.split('@')[0]}</div>
+                <div className="usr-cargo">{u.cargo || 'Sem cargo definido'}</div>
+              </div>
+              <div className="usr-email">{u.email}</div>
+              <span className="role-pill" style={{ background: ri.bg, color: ri.c }}>{ri.l}</span>
+              <span className={`status-dot ${u.ativo ? '' : 'off'}`}><i />{u.ativo ? 'Ativo' : 'Inativo'}</span>
+            </button>
+          )
+        })}
+        {filtrada.length === 0 && <div className="empty">Nenhum usuário encontrado.</div>}
       </div>
     </div>
   )
@@ -95,99 +100,110 @@ function Detalhe({ conta, obras, onSalvo, onVoltar }: {
   const set = <K extends keyof Conta>(k: K, v: Conta[K]) => setF(p => ({ ...p, [k]: v }))
   const toggleArr = (k: 'modulos' | 'obras', id: string) =>
     setF(p => ({ ...p, [k]: p[k].includes(id) ? p[k].filter(x => x !== id) : [...p[k], id] }))
+  const perfilAtivo = useMemo(() => PERFIS.find(p =>
+    p.role === f.role && p.operar === f.operar && p.gerar_plano === f.gerar_plano &&
+    p.gerenciar_usuarios === f.gerenciar_usuarios &&
+    JSON.stringify([...p.modulos].sort()) === JSON.stringify([...f.modulos].sort()))?.id, [f])
   const aplicarPerfil = (id: string) => {
     const p = PERFIS.find(x => x.id === id); if (!p) return
     setF(prev => ({ ...prev, role: p.role, tipo: p.tipo, modulos: [...p.modulos],
       operar: p.operar, gerar_plano: p.gerar_plano, gerenciar_usuarios: p.gerenciar_usuarios }))
   }
-
   const salvar = async () => {
     if (!f.email.trim() || !f.email.includes('@')) { setErro('Informe um e-mail válido.'); return }
     setProc(true); setErro('')
-    try { await api.salvarUsuario(f); setMsg('✓ Salvo.'); setTimeout(onSalvo, 900) }
+    try { await api.salvarUsuario(f); setMsg('✓ Salvo.'); setTimeout(onSalvo, 800) }
     catch (e) { setErro(e instanceof Error ? e.message : String(e)); setProc(false) }
   }
+  const ri = roleInfo(f.role)
 
   return (
-    <div className="dash">
-      <div className="chart-card" style={{ maxWidth: 760 }}>
-        <div className="chart-head">
-          <div>
-            <button className="mini" onClick={onVoltar}>← Usuários</button>
-            <h3 style={{ marginTop: 8 }}>{f.nome || (conta ? f.email : 'Novo usuário')}</h3>
+    <div className="dash usr">
+      <button className="usr-back" onClick={onVoltar}>← Usuários</button>
+
+      <div className="usr-hero">
+        <Avatar url={null} nome={f.nome || f.email || '?'} size={64} />
+        <div className="usr-hero-id">
+          <h2>{f.nome || (conta ? f.email : 'Novo usuário')}</h2>
+          <div className="usr-hero-sub">{f.cargo || 'Sem cargo definido'}{conta ? ` · ${f.email}` : ''}</div>
+          <div className="usr-hero-badges">
+            <span className="role-pill" style={{ background: ri.bg, color: ri.c }}>{ri.l}</span>
+            <span className={`status-dot ${f.ativo ? '' : 'off'}`}><i />{f.ativo ? 'Ativo' : 'Inativo'}</span>
           </div>
-          <button className="ghost" onClick={() => set('ativo', !f.ativo)} style={{ color: f.ativo ? 'var(--ruptura)' : 'var(--ok)' }}>
-            {f.ativo ? 'Inativar usuário' : 'Reativar usuário'}</button>
         </div>
+        <button className={`usr-inativar ${f.ativo ? '' : 'reativar'}`} onClick={() => set('ativo', !f.ativo)}>
+          {f.ativo ? 'Inativar' : 'Reativar'}</button>
+      </div>
 
-        <div className="chips">
-          <button className={tab === 'info' ? 'on' : ''} onClick={() => setTab('info')}>Informações</button>
-          <button className={tab === 'perms' ? 'on' : ''} onClick={() => setTab('perms')}>Permissões</button>
-        </div>
+      <div className="usr-tabs">
+        <button className={tab === 'info' ? 'on' : ''} onClick={() => setTab('info')}>Informações</button>
+        <button className={tab === 'perms' ? 'on' : ''} onClick={() => setTab('perms')}>Permissões</button>
+      </div>
 
+      <div className="usr-card">
         {tab === 'info' ? (
-          <div style={{ maxWidth: 460 }}>
-            <label className="campo"><span>Nome *</span>
-              <input value={f.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Nome e cargo" /></label>
-            <label className="campo"><span>E-mail *</span>
+          <div className="usr-form">
+            <label className="campo"><span>Nome</span>
+              <input value={f.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Nome completo" /></label>
+            <label className="campo"><span>E-mail</span>
               <input value={f.email} onChange={e => set('email', e.target.value.toLowerCase())} disabled={!!conta} placeholder="email@empresa.com" /></label>
             <label className="campo"><span>Cargo / Função</span>
               <input value={f.cargo || ''} onChange={e => set('cargo', e.target.value)} placeholder="ex.: Analista de Planejamento" /></label>
-            <div className="req-topo">
-              <label className="campo"><span>Tipo</span>
-                <select value={f.tipo} onChange={e => set('tipo', e.target.value)}>
-                  <option>Geral</option><option>Administrador</option><option>Terceiro</option></select></label>
-              <label className="campo"><span>Papel na aprovação</span>
-                <select value={f.role} onChange={e => set('role', e.target.value)}>
-                  {ROLES.map(r => <option key={r.v} value={r.v}>{r.l}</option>)}</select></label>
-            </div>
+            <label className="campo"><span>Tipo</span>
+              <select value={f.tipo} onChange={e => set('tipo', e.target.value)}>
+                <option>Geral</option><option>Administrador</option><option>Terceiro</option></select></label>
+            <label className="campo" style={{ gridColumn: '1 / -1' }}><span>Papel na aprovação</span>
+              <select value={f.role} onChange={e => set('role', e.target.value)}>
+                {ROLES.map(r => <option key={r.v} value={r.v}>{r.l}</option>)}</select></label>
           </div>
         ) : (
-          <div>
-            <label className="campo" style={{ maxWidth: 340 }}><span>Aplicar perfil pronto</span>
-              <select defaultValue="" onChange={e => { aplicarPerfil(e.target.value); e.target.value = '' }}>
-                <option value="" disabled>Escolha um perfil…</option>
-                {PERFIS.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
-              </select>
-              <span className="meta" style={{ marginTop: 4 }}>Preenche módulos, papel e ações. Você ainda pode ajustar abaixo.</span>
-            </label>
-            <div className="meta" style={{ margin: '14px 0 12px' }}>Marque os módulos que este usuário pode acessar. <b>Nenhum marcado = acesso a todos.</b></div>
+          <>
+            <div className="usr-sec">Perfil pronto</div>
+            <div className="perfil-cards">
+              {PERFIS.map(p => (
+                <button key={p.id} className={`perfil-card ${perfilAtivo === p.id ? 'on' : ''}`} onClick={() => aplicarPerfil(p.id)}>
+                  <b>{p.nome}</b><span>{p.descricao}</span></button>
+              ))}
+            </div>
+
+            <div className="usr-sec">Módulos <span className="usr-sec-hint">nenhum marcado = acesso a todos</span></div>
             {(['Dashboards', 'Almoxarifado'] as const).map(g => (
               <div key={g} style={{ marginBottom: 12 }}>
-                <div className="side-grupo-tt" style={{ padding: '0 0 6px' }}>{g}</div>
-                <div className="perm-grid">
+                <div className="usr-grp">{g}</div>
+                <div className="toggle-chips">
                   {MODULOS.filter(m => m.grupo === g).map(m => (
-                    <label key={m.id} className="perm-item">
-                      <input type="checkbox" checked={f.modulos.includes(m.id)} onChange={() => toggleArr('modulos', m.id)} />
-                      <span>{m.nome}</span></label>
+                    <button key={m.id} className={`tchip ${f.modulos.includes(m.id) ? 'on' : ''}`} onClick={() => toggleArr('modulos', m.id)}>{m.nome}</button>
                   ))}
                 </div>
               </div>
             ))}
 
-            <div className="side-grupo-tt" style={{ padding: '8px 0 6px' }}>Ações sensíveis</div>
-            <div className="perm-grid">
-              <label className="perm-item"><input type="checkbox" checked={f.gerenciar_usuarios} onChange={e => set('gerenciar_usuarios', e.target.checked)} /><span>Gerenciar usuários</span></label>
-              <label className="perm-item"><input type="checkbox" checked={f.operar} onChange={e => set('operar', e.target.checked)} /><span>Operar (baixa/entrada no Sienge)</span></label>
-              <label className="perm-item"><input type="checkbox" checked={f.gerar_plano} onChange={e => set('gerar_plano', e.target.checked)} /><span>Gerar plano de compra</span></label>
-            </div>
+            <div className="usr-sec">Ações sensíveis</div>
+            {([
+              ['gerenciar_usuarios', 'Gerenciar usuários', 'Acessar e editar este módulo de usuários'],
+              ['operar', 'Operar almoxarifado', 'Registrar baixa e entrada direto no Sienge'],
+              ['gerar_plano', 'Gerar plano de compra', 'Consolidar a cesta do MRP em plano por fornecedor'],
+            ] as const).map(([k, t, d]) => (
+              <div key={k} className={`act-row ${f[k] ? 'on' : ''}`}>
+                <div className="act-txt"><b>{t}</b><span>{d}</span></div>
+                <button className={`sw ${f[k] ? 'on' : ''}`} onClick={() => set(k, !f[k])} aria-label={t}><i /></button>
+              </div>
+            ))}
 
-            <div className="side-grupo-tt" style={{ padding: '14px 0 6px' }}>Obras que pode acessar <span className="meta">(nenhuma = todas)</span></div>
-            <div className="perm-grid">
+            <div className="usr-sec">Obras <span className="usr-sec-hint">nenhuma marcada = todas</span></div>
+            <div className="toggle-chips">
               {obras.map(o => (
-                <label key={o.prevision_id} className="perm-item">
-                  <input type="checkbox" checked={f.obras.includes(o.prevision_id)} onChange={() => toggleArr('obras', o.prevision_id)} />
-                  <span>{o.nome}</span></label>
+                <button key={o.prevision_id} className={`tchip ${f.obras.includes(o.prevision_id) ? 'on' : ''}`} onClick={() => toggleArr('obras', o.prevision_id)}>{o.nome}</button>
               ))}
             </div>
-          </div>
+          </>
         )}
 
-        {erro && <div className="msg bad">{erro}</div>}
-        {msg && <div className="msg ok">{msg}</div>}
-        <div className="modal-acts">
+        {erro && <div className="msg bad" style={{ marginTop: 14 }}>{erro}</div>}
+        {msg && <div className="msg ok" style={{ marginTop: 14 }}>{msg}</div>}
+        <div className="usr-acts">
           <button className="ghost" onClick={onVoltar} disabled={proc}>Cancelar</button>
-          <button className="cta" onClick={salvar} disabled={proc}>{proc ? 'Salvando…' : 'Salvar'}</button>
+          <button className="cta" onClick={salvar} disabled={proc}>{proc ? 'Salvando…' : 'Salvar alterações'}</button>
         </div>
       </div>
     </div>
