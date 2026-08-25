@@ -42,6 +42,14 @@ export interface ItemSubetapa {
   wbs_code: string; descricao: string; percentual: number | null
   uc_id: number | null; uc_nome: string | null
 }
+export interface WbsOpcao {
+  uc_id: number; uc_nome: string | null; wbs_code: string; descricao: string; qtd_orcada: number | null
+}
+export interface CorrigirBody {
+  obra: string; purchase_request_id: number; item_number: number
+  apropriacoes: { building_unit_id: number; wbs_code: string; percentage: number }[]
+  reprovar_original: boolean
+}
 
 export interface RecebFila {
   pedido_id: number; numero: string; data: string | null; dias_aberto: number | null
@@ -177,6 +185,12 @@ export interface Movimento {
 
 export interface Obra { prevision_id: string; nome: string }
 
+export interface Conta {
+  email: string; nome: string | null; cargo: string | null; tipo: string
+  ativo: boolean; role: string; modulos: string[]; obras: string[]
+  gerenciar_usuarios: boolean; operar: boolean; gerar_plano: boolean
+}
+
 import { supabase } from './supabase'
 
 // Em produção (Vercel) aponta para o backend no Render (VITE_API_BASE).
@@ -207,6 +221,10 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
 export const api = {
   health: () => fetch(API_BASE + '/api/health').then(j<{ ok: boolean; modo: string; auth: boolean }>),
   obras: () => req<Obra[]>('/api/obras'),
+  eu: () => req<Conta>('/api/eu'),
+  usuarios: () => req<{ usuarios: Conta[]; modulos: string[] }>('/api/usuarios'),
+  salvarUsuario: (u: Partial<Conta> & { email: string }) =>
+    req<Conta>('/api/usuarios', { method: 'POST', body: JSON.stringify(u) }),
   material: (obra: string, janela = 90) =>
     req<Material>(`/api/estoque/material?obra=${obra}&janela_dias=${janela}`),
   financeiro: (obra: string, meses = 12) =>
@@ -237,6 +255,10 @@ export const api = {
     req<{ solicitacoes: SolicSienge[] }>(`/api/aprovacao/pendentes?obra=${obra}`),
   itemSubetapa: (obra: string, prId: number, itemNumber: number) =>
     req<{ subetapas: ItemSubetapa[] }>(`/api/aprovacao/item-subetapa?obra=${obra}&pr_id=${prId}&item_number=${itemNumber}`),
+  wbsBusca: (obra: string, q: string, uc?: number) =>
+    req<{ subetapas: WbsOpcao[] }>(`/api/aprovacao/wbs-busca?obra=${obra}&q=${encodeURIComponent(q)}${uc != null ? `&uc=${uc}` : ''}`),
+  corrigirItem: (body: CorrigirBody) =>
+    req<{ ok: boolean; reprovado_original: boolean }>(`/api/aprovacao/corrigir-item`, { method: 'POST', body: JSON.stringify(body) }),
   siengeAutorizar: (purchase_request_id: number) =>
     req<{ ok: boolean }>(`/api/aprovacao/sienge/autorizar`, { method: 'POST', body: JSON.stringify({ purchase_request_id }) }),
   siengeReprovar: (purchase_request_id: number, motivo: string) =>

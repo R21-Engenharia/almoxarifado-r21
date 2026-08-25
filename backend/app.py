@@ -77,6 +77,17 @@ def usuario_admin(authorization: str | None = Header(default=None)) -> str:
         raise HTTPException(403, "Ação restrita a administradores.")
     return email
 
+
+def usuario_gestor(authorization: str | None = Header(default=None)) -> str:
+    """Exige permissão de gerenciar usuários (flag gerenciar_usuarios ou role admin)."""
+    email = usuario_logado(authorization)
+    if not _auth_ativo():
+        return email  # dev local
+    p = supa.perms_do_email(email) or {}
+    if not (p.get("gerenciar_usuarios") or (p.get("role") or "").lower() == "admin"):
+        raise HTTPException(403, "Você não tem permissão para gerenciar usuários.")
+    return email
+
 import json
 from datetime import datetime
 
@@ -219,6 +230,72 @@ def listar_obras(usuario: str = Depends(usuario_logado)):
          "nome": (o["nome"] + " (DEMO)") if demo else o["nome"]}
         for pid, o in OBRAS.items()
     ]
+
+
+# ---------------------------------------------------------------- usuários / permissões
+_MODULOS = ["financeiro", "posicao", "recebimentos", "consumo", "suprimentos", "fornecedores",
+            "equipamentos", "aprovacao", "requisicao", "estoque", "operar", "historico"]
+
+
+def _perfil_norm(row: dict | None, email: str) -> dict:
+    """Normaliza a linha de authorized_emails no shape de permissões do app."""
+    row = row or {}
+    return {
+        "email": email, "nome": row.get("nome"), "cargo": row.get("cargo"),
+        "tipo": row.get("tipo") or "Geral", "ativo": row.get("ativo", True),
+        "role": (row.get("role") or "user"),
+        "modulos": row.get("modulos") or [],          # [] = todos
+        "obras": row.get("obras") or [],              # [] = todas
+        "gerenciar_usuarios": bool(row.get("gerenciar_usuarios") or (row.get("role") or "").lower() == "admin"),
+        "operar": bool(row.get("operar")),
+        "gerar_plano": bool(row.get("gerar_plano")),
+    }
+
+
+@app.get("/api/eu")
+def eu(usuario: str = Depends(usuario_logado)):
+    """Perfil + permissões do usuário logado (para o app filtrar menu e ações)."""
+    if not _auth_ativo():
+        return {"email": usuario, "nome": usuario, "tipo": "Geral", "ativo": True, "role": "admin",
+                "modulos": [], "obras": [], "gerenciar_usuarios": True, "operar": True, "gerar_plano": True}
+    return _perfil_norm(supa.perms_do_email(usuario), usuario)
+
+
+@app.get("/api/usuarios")
+def usuarios_listar(usuario: str = Depends(usuario_gestor)):
+    if not _auth_ativo():
+        return {"usuarios": [], "modulos": _MODULOS}
+    linhas = [_perfil_norm(r, r.get("email")) for r in supa.listar_usuarios()]
+    return {"usuarios": linhas, "modulos": _MODULOS}
+
+
+class UsuarioIn(BaseModel):
+    email: str
+    nome: str | None = None
+    cargo: str | None = None
+    tipo: str | None = "Geral"
+    ativo: bool = True
+    role: str | None = "user"
+    modulos: list[str] = []
+    obras: list[str] = []
+    gerenciar_usuarios: bool = False
+    operar: bool = False
+    gerar_plano: bool = False
+
+
+@app.post("/api/usuarios")
+def usuarios_salvar(corpo: UsuarioIn, usuario: str = Depends(usuario_gestor)):
+    email = (corpo.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(422, "E-mail inválido.")
+    dados = corpo.model_dump()
+    dados["email"] = email
+    dados["modulos"] = [m for m in corpo.modulos if m in _MODULOS]
+    try:
+        salvo = supa.upsert_usuario(dados)
+    except supa.AuthError as e:
+        raise HTTPException(e.status if getattr(e, "status", 0) else 422, e.msg)
+    return _perfil_norm(salvo, email)
 
 
 @app.get("/api/estoque/material")
@@ -460,6 +537,108 @@ def item_subetapa(obra: str = Query(...), pr_id: int = Query(...), item_number: 
                      "uc_id": a.get("buildingUnitId"), "uc_nome": r["uc_nome"],
                      "percentual": a.get("percentage")})
     return {"subetapas": subs}
+
+
+@app.get("/api/aprovacao/wbs-busca")
+def wbs_busca(obra: str = Query(...), q: str = Query(""), uc: str | None = None,
+              usuario: str = Depends(usuario_logado)):
+    """Busca subetapas (WBS) do orçamento por código ou descrição, por UC.
+    Serve para escolher a apropriação CERTA ao corrigir um item."""
+    obra_ou_erro(obra)
+    mapa = _wbs_map(obra)
+    ucs = mapa.get("ucs", {})
+    ql = q.strip().lower()
+    out = []
+    for sid, codes in mapa.get("wbs", {}).items():
+        if uc and str(uc) != sid:
+            continue
+        for code, info in codes.items():
+            desc = info.get("descricao") or ""
+            if ql and ql not in code.lower() and ql not in desc.lower():
+                continue
+            out.append({"uc_id": int(sid) if sid.isdigit() else sid, "uc_nome": ucs.get(sid),
+                        "wbs_code": code, "descricao": desc, "qtd_orcada": info.get("qtd_orcada")})
+            if len(out) >= 40:
+                break
+        if len(out) >= 40:
+            break
+    return {"subetapas": out, "ucs": ucs}
+
+
+class ApropRef(BaseModel):
+    building_unit_id: int
+    wbs_code: str
+    percentage: float
+
+
+class CorrigirItem(BaseModel):
+    obra: str
+    purchase_request_id: int
+    item_number: int
+    apropriacoes: list[ApropRef]
+    reprovar_original: bool = True
+
+
+@app.post("/api/aprovacao/corrigir-item")
+def corrigir_item(corpo: CorrigirItem, usuario: str = Depends(usuario_logado)):
+    """Corrige a apropriação de um item RELANÇANDO o mesmo insumo com a apropriação
+    certa (a API do Sienge não permite editar apropriação existente). Opcionalmente
+    reprova o item original (se ainda estiver aguardando). O item novo nasce AUTORIZADO."""
+    obra_ou_erro(corpo.obra)
+    if _modo_demo():
+        raise HTTPException(422, "Indisponível em modo demonstração.")
+    soma = round(sum(a.percentage for a in corpo.apropriacoes), 2)
+    if abs(soma - 100.0) > 0.01:
+        raise HTTPException(422, f"As apropriações precisam somar 100% (soma atual: {soma}%).")
+    # dados do item original
+    itens = sienge.solic_itens_da_pr(corpo.purchase_request_id)
+    orig = next((i for i in itens if i.get("itemNumber") == corpo.item_number), None)
+    if not orig:
+        raise HTTPException(404, "Item original não encontrado na solicitação.")
+    entregas = sienge.solic_item_entregas(corpo.purchase_request_id, corpo.item_number)
+    if entregas:
+        dr = [{"deliveryRequirementNumber": e.get("deliveryRequirementNumber", i + 1),
+               "requirementDate": e.get("requirementDate"),
+               "requirementQuantity": e.get("requirementQuantity") or orig.get("quantity"),
+               "openQuantity": True} for i, e in enumerate(entregas)]
+    else:
+        dr = [{"deliveryRequirementNumber": 1, "requirementDate": date.today().isoformat(),
+               "requirementQuantity": orig.get("quantity"), "openQuantity": True}]
+    novo = {
+        "productId": orig.get("productId"),
+        "quantity": orig.get("quantity"),
+        "unitySymbol": orig.get("unitySymbol"),
+        "notes": f"Correção de apropriação do item {corpo.item_number} (BOX21)",
+        "buildingsApropriations": [{"buildingUnitId": a.building_unit_id,
+                                    "costEstimationItemReference": a.wbs_code,
+                                    "percentage": a.percentage} for a in corpo.apropriacoes],
+        "deliveryRequirements": dr,
+    }
+    if orig.get("detailId"):
+        novo["detailId"] = orig["detailId"]
+    if orig.get("trademarkId"):
+        novo["trademarkId"] = orig["trademarkId"]
+
+    # O Sienge NÃO deixa ter o mesmo insumo duplicado na solicitação — então é
+    # preciso REPROVAR o item errado ANTES de relançar o corrigido. Só é possível
+    # se o item ainda estiver aguardando autorização.
+    if orig.get("authorized"):
+        raise HTTPException(422, "O item original já está autorizado — não dá para corrigir pela API. "
+                                 "Ajuste direto no Sienge.")
+    reprovado = False
+    if corpo.reprovar_original and not orig.get("disapproved"):
+        try:
+            sienge.solic_reprovar_item(corpo.purchase_request_id, corpo.item_number)
+            reprovado = True
+        except sienge.SiengeError as e:
+            raise HTTPException(422, f"Não consegui reprovar o item original: {e.mensagem}")
+    try:
+        sienge.solic_add_itens(corpo.purchase_request_id, [novo])
+    except sienge.SiengeError as e:
+        raise HTTPException(422, f"Item original {'reprovado' if reprovado else 'mantido'}, "
+                                 f"mas falhou ao relançar o corrigido: {e.mensagem}")
+    _PEND_CACHE["ts"] = 0.0
+    return {"ok": True, "reprovado_original": reprovado}
 
 
 class SolicAcao(BaseModel):

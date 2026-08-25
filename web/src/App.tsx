@@ -16,6 +16,9 @@ import Suprimentos from './Suprimentos'
 import Equipamentos from './EquipamentosView'
 import Aprovacoes from './AprovacaoView'
 import Loader from './Loader'
+import Usuarios from './UsuariosView'
+import { podeVer } from './modulos'
+import { type Conta } from './api'
 import iconFinanceiro from './assets/menu-icons/financeiro.webp'
 import iconPosicao from './assets/menu-icons/posicao.webp'
 import iconRecebimentos from './assets/menu-icons/recebimentos.webp'
@@ -30,10 +33,10 @@ import iconOperar from './assets/menu-icons/operar.webp'
 import iconHistorico from './assets/menu-icons/historico.webp'
 
 type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
-  | 'equipamentos' | 'estoque' | 'requisicao' | 'aprovacao' | 'operar' | 'historico'
+  | 'equipamentos' | 'estoque' | 'requisicao' | 'aprovacao' | 'operar' | 'historico' | 'usuarios'
 
 // ícone gráfico único por seção (arte BOX21) — reutilizado no render do menu, sem duplicar componente
-const ICON_SRC: Record<Secao, string> = {
+const ICON_SRC: Partial<Record<Secao, string>> = {
   financeiro: iconFinanceiro, posicao: iconPosicao, recebimentos: iconRecebimentos, consumo: iconConsumo,
   suprimentos: iconSuprimentos, fornecedores: iconFornecedores, equipamentos: iconEquipamentos,
   aprovacao: iconAprovacao, requisicao: iconRequisicao, estoque: iconEstoque, operar: iconOperar, historico: iconHistorico,
@@ -74,6 +77,7 @@ const TITULOS: Record<Secao, { t: string; s: string }> = {
   estoque: { t: 'Estoque', s: 'Risco de ruptura e capital parado' },
   operar: { t: 'Operar almoxarifado', s: 'Baixa, entrada e ajustes no Sienge' },
   historico: { t: 'Histórico', s: 'Movimentações registradas pelo app' },
+  usuarios: { t: 'Usuários', s: 'Contas com acesso ao BOX21 e permissões de cada uma' },
 }
 
 export default function App() {
@@ -87,6 +91,7 @@ export default function App() {
   // usuário: e-mail da sessão Supabase; em dev (sem auth) usa um rótulo fixo
   const [usuario, setUsuario] = useState<string | null>(authAtiva ? null : 'dev local')
   const [carregandoSessao, setCarregandoSessao] = useState<boolean>(authAtiva)
+  const [conta, setConta] = useState<Conta | null>(null)  // permissões do usuário logado
   // perfil
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [google, setGoogle] = useState<DadosGoogle>({ nome: '', foto: '', email: '' })
@@ -109,6 +114,7 @@ export default function App() {
     api.health().then(h => setModo(h.modo)).catch(() => setModo('offline'))
     api.obras().then(os => { setObras(os); setObra(os[0]?.prevision_id || ''); setErroAcesso('') })
       .catch(e => setErroAcesso(e instanceof Error ? e.message : String(e)))
+    api.eu().then(setConta).catch(() => setConta(null))
     if (authAtiva) {
       Promise.all([carregarPerfil(), dadosDaSessao()]).then(([p, g]) => {
         setPerfil(p); setGoogle(g)
@@ -116,6 +122,17 @@ export default function App() {
       })
     }
   }, [usuario])
+
+  // se a seção atual não for permitida ao usuário, cai na primeira permitida
+  useEffect(() => {
+    if (!conta) return
+    const mods = conta.modulos || []
+    const permitido = (s: Secao) => s === 'usuarios' ? conta.gerenciar_usuarios : podeVer(mods, s)
+    if (!permitido(secao)) {
+      const primeira = NAV.flatMap(g => g.itens).find(it => podeVer(mods, it.id))?.id
+      if (primeira) setSecao(primeira)
+    }
+  }, [conta]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (carregandoSessao) return <Loader full label="o BOX21" dica="Verificando seu acesso…" />
   if (!usuario) return <Login />
@@ -126,17 +143,25 @@ export default function App() {
 
   const irPara = (s: Secao) => { setSecao(s); setMenuAberto(false) }
 
+  // menu filtrado pelas permissões do usuário (módulos vazios = todos) + grupo Administração
+  const mods = conta?.modulos || []
+  const navVisivel = NAV.map(g => ({ grupo: g.grupo, itens: g.itens.filter(it => podeVer(mods, it.id)) })).filter(g => g.itens.length > 0)
+  if (conta?.gerenciar_usuarios) navVisivel.push({ grupo: 'Administração', itens: [{ id: 'usuarios' as Secao, nome: 'Usuários' }] })
+
   return (
     <div className={`plataforma ${menuAberto ? 'menu-aberto' : ''}`}>
       <aside className="side">
         <div className="side-logo"><img src="/box21.png" alt="BOX21" className="side-brand" /></div>
         <nav className="side-nav">
-          {NAV.map(g => (
+          {navVisivel.map(g => (
             <div className="side-grupo" key={g.grupo}>
               <div className="side-grupo-tt">{g.grupo}</div>
               {g.itens.map(it => (
                 <button key={it.id} className={`side-item ${secao === it.id ? 'on' : ''}`} onClick={() => irPara(it.id)}>
-                  <img className="side-ic" src={ICON_SRC[it.id]} alt="" /><span className="side-nome">{it.nome}</span>
+                  {ICON_SRC[it.id]
+                    ? <img className="side-ic" src={ICON_SRC[it.id]} alt="" />
+                    : <span className="side-ic side-ic-svg" aria-hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>}
+                  <span className="side-nome">{it.nome}</span>
                 </button>
               ))}
             </div>
@@ -190,6 +215,7 @@ export default function App() {
           {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
           {obra && secao === 'recebimentos' && <Recebimentos obra={obra} />}
           {obra && secao === 'suprimentos' && <Suprimentos obra={obra} />}
+          {secao === 'usuarios' && <Usuarios obras={obras} />}
           {obra && secao === 'posicao' && <Posicao obra={obra} />}
           {obra && secao === 'consumo' && <Consumo obra={obra} />}
           {obra && secao === 'fornecedores' && <Fornecedores obra={obra} />}

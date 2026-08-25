@@ -80,22 +80,55 @@ def email_do_token(token: str) -> str:
     return email
 
 
+_AE = "/rest/v1/authorized_emails"
+
+
+def perms_do_email(email: str) -> dict | None:
+    """Linha completa de authorized_emails (perfil + permissões) ou None.
+    Usuário INATIVO conta como não autorizado."""
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.get(f"{_url()}{_AE}", params={"email": f"eq.{email}", "select": "*", "limit": 1},
+                    headers=_headers_admin())
+    if r.status_code == 200 and r.json():
+        row = r.json()[0]
+        if row.get("ativo") is False:
+            return None
+        return row
+    return None
+
+
 def role_do_email(email: str) -> str | None:
-    """Consulta authorized_emails. Retorna a role ('admin'/'user'/...) ou None
-    se o e-mail não estiver autorizado."""
+    """Retorna a role ('admin'/'user'/...) ou None se não autorizado/inativo."""
     agora = time.time()
     c = _ROLE_CACHE.get(email)
     if c and c[1] > agora:
         return c[0]
-    with httpx.Client(timeout=TIMEOUT) as cli:
-        r = cli.get(f"{_url()}/rest/v1/authorized_emails",
-                    params={"email": f"eq.{email}", "select": "email,role"},
-                    headers=_headers_admin())
-    role = None
-    if r.status_code == 200 and r.json():
-        role = (r.json()[0].get("role") or "user")
+    row = perms_do_email(email)
+    role = (row.get("role") or "user") if row else None
     _ROLE_CACHE[email] = (role, agora + _TTL)
     return role
+
+
+# ---- gestão de usuários (só via backend, service_role) ----
+def listar_usuarios() -> list[dict]:
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.get(f"{_url()}{_AE}", params={"select": "*", "order": "nome.asc"},
+                    headers=_headers_admin())
+        r.raise_for_status()
+        return r.json()
+
+
+def upsert_usuario(dados: dict) -> dict:
+    """Cria/atualiza um usuário (chave = email). Invalida o cache de role."""
+    _ROLE_CACHE.pop(dados.get("email", ""), None)
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.post(f"{_url()}{_AE}?on_conflict=email",
+                     headers={**_headers_admin(), "Prefer": "resolution=merge-duplicates,return=representation"},
+                     json=dados)
+        if r.status_code >= 400:
+            raise AuthError((r.text or "")[:200], r.status_code)
+        j = r.json()
+        return j[0] if isinstance(j, list) and j else (j or dados)
 
 
 # ---------------------------------------------------------------- auditoria

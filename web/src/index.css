@@ -229,6 +229,12 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .ctx-time { margin: 8px 0 4px; }
 .ctx-ev { display: flex; gap: 10px; padding: 6px 0; }
 .ctx-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex-shrink: 0; }
+.side-ic-svg { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #a6a6b0; }
+.side-item.on .side-ic-svg { color: #fff; }
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 7px 16px; }
+.perm-item { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; color: var(--text); }
+.perm-item input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+
 .sup-rup { color: var(--ruptura); font-weight: 700; }
 .sup-tbl td { vertical-align: top; }
 .sup-tbl tr.sel { background: #e2231a12; }
