@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type Conta, type Obra } from './api'
 import { authAtiva } from './supabase'
-import { MODULOS } from './modulos'
+import { MODULOS, PERFIS } from './modulos'
 import Loader from './Loader'
 
 type Tab = 'info' | 'perms'
@@ -95,6 +95,11 @@ function Detalhe({ conta, obras, onSalvo, onVoltar }: {
   const set = <K extends keyof Conta>(k: K, v: Conta[K]) => setF(p => ({ ...p, [k]: v }))
   const toggleArr = (k: 'modulos' | 'obras', id: string) =>
     setF(p => ({ ...p, [k]: p[k].includes(id) ? p[k].filter(x => x !== id) : [...p[k], id] }))
+  const aplicarPerfil = (id: string) => {
+    const p = PERFIS.find(x => x.id === id); if (!p) return
+    setF(prev => ({ ...prev, role: p.role, tipo: p.tipo, modulos: [...p.modulos],
+      operar: p.operar, gerar_plano: p.gerar_plano, gerenciar_usuarios: p.gerenciar_usuarios }))
+  }
 
   const salvar = async () => {
     if (!f.email.trim() || !f.email.includes('@')) { setErro('Informe um e-mail válido.'); return }
@@ -139,7 +144,14 @@ function Detalhe({ conta, obras, onSalvo, onVoltar }: {
           </div>
         ) : (
           <div>
-            <div className="meta" style={{ marginBottom: 12 }}>Marque os módulos que este usuário pode acessar. <b>Nenhum marcado = acesso a todos.</b></div>
+            <label className="campo" style={{ maxWidth: 340 }}><span>Aplicar perfil pronto</span>
+              <select defaultValue="" onChange={e => { aplicarPerfil(e.target.value); e.target.value = '' }}>
+                <option value="" disabled>Escolha um perfil…</option>
+                {PERFIS.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select>
+              <span className="meta" style={{ marginTop: 4 }}>Preenche módulos, papel e ações. Você ainda pode ajustar abaixo.</span>
+            </label>
+            <div className="meta" style={{ margin: '14px 0 12px' }}>Marque os módulos que este usuário pode acessar. <b>Nenhum marcado = acesso a todos.</b></div>
             {(['Dashboards', 'Almoxarifado'] as const).map(g => (
               <div key={g} style={{ marginBottom: 12 }}>
                 <div className="side-grupo-tt" style={{ padding: '0 0 6px' }}>{g}</div>
