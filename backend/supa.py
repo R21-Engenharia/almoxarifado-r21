@@ -24,6 +24,13 @@ def _key() -> str:
     return os.environ.get("SUPABASE_KEY") or ""
 
 
+def _service_key() -> str:
+    """Chave service_role (secreta, só no servidor) — ignora o RLS. Usada nas
+    operações privilegiadas do backend (checar authorized_emails, auditoria).
+    Cai na anon key se não estiver setada, pra não quebrar antes de configurar."""
+    return os.environ.get("SUPABASE_SERVICE_KEY") or _key()
+
+
 def configurado() -> bool:
     return bool(_url() and _key())
 
@@ -32,6 +39,13 @@ def _headers(token: str | None = None) -> dict:
     h = {"apikey": _key(), "Content-Type": "application/json"}
     h["Authorization"] = f"Bearer {token or _key()}"
     return h
+
+
+def _headers_admin() -> dict:
+    """Headers com a service_role key — para ler/gravar tabelas protegidas por RLS
+    a partir do backend (o front nunca recebe esta chave)."""
+    k = _service_key()
+    return {"apikey": k, "Authorization": f"Bearer {k}", "Content-Type": "application/json"}
 
 
 # ---------------------------------------------------------------- auth
@@ -76,7 +90,7 @@ def role_do_email(email: str) -> str | None:
     with httpx.Client(timeout=TIMEOUT) as cli:
         r = cli.get(f"{_url()}/rest/v1/authorized_emails",
                     params={"email": f"eq.{email}", "select": "email,role"},
-                    headers=_headers())
+                    headers=_headers_admin())
     role = None
     if r.status_code == 200 and r.json():
         role = (r.json()[0].get("role") or "user")
@@ -103,7 +117,7 @@ def registrar(usuario, obra, operacao, movement_type_id, document_id,
         "terceiro": terceiro, "solicitante": solicitante,
     } for it in itens]
     with httpx.Client(timeout=TIMEOUT) as cli:
-        r = cli.post(f"{_url()}{TBL}", headers={**_headers(), "Prefer": "return=representation"},
+        r = cli.post(f"{_url()}{TBL}", headers={**_headers_admin(), "Prefer": "return=representation"},
                      json=linhas)
         r.raise_for_status()
         return [row["id"] for row in r.json()]
@@ -113,7 +127,7 @@ def historico(obra: str, limite: int = 200) -> list[dict]:
     with httpx.Client(timeout=TIMEOUT) as cli:
         r = cli.get(f"{_url()}{TBL}",
                     params={"obra": f"eq.{obra}", "order": "criado_em.desc", "limit": limite},
-                    headers=_headers())
+                    headers=_headers_admin())
         r.raise_for_status()
         return r.json()
 
@@ -121,7 +135,7 @@ def historico(obra: str, limite: int = 200) -> list[dict]:
 def por_id(aud_id: int) -> dict | None:
     with httpx.Client(timeout=TIMEOUT) as cli:
         r = cli.get(f"{_url()}{TBL}", params={"id": f"eq.{aud_id}", "limit": 1},
-                    headers=_headers())
+                    headers=_headers_admin())
         r.raise_for_status()
         rows = r.json()
         return rows[0] if rows else None
@@ -130,4 +144,4 @@ def por_id(aud_id: int) -> dict | None:
 def marcar_estornado(aud_id: int):
     with httpx.Client(timeout=TIMEOUT) as cli:
         cli.patch(f"{_url()}{TBL}", params={"id": f"eq.{aud_id}"},
-                  headers=_headers(), json={"estornado": True})
+                  headers=_headers_admin(), json={"estornado": True})
