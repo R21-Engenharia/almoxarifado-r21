@@ -44,12 +44,27 @@ def _auth():
     return (user, pwd)
 
 
+def _call(method: str, path_or_url: str, *, retries: int = 5, **kw):
+    """HTTP com retry em 429 (rate limit) — respeita Retry-After, senão backoff.
+    path começa com / => base v1; ou passe a URL completa."""
+    import time
+    url = path_or_url if path_or_url.startswith("http") else f"{_base_v1()}{path_or_url}"
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = None
+        for i in range(retries):
+            r = c.request(method, url, **kw)
+            if r.status_code != 429:
+                return r
+            wait = r.headers.get("Retry-After")
+            time.sleep(min(float(wait) if wait else 1.5 * (2 ** i), 20))
+        return r
+
+
 def get_json(path: str, params: dict | None = None) -> dict:
     """GET genérico autenticado (path começa com /). Retorna o JSON."""
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        r = c.get(f"{_base_v1()}{path}", params=params or {})
-        r.raise_for_status()
-        return r.json()
+    r = _call("GET", path, params=params or {})
+    r.raise_for_status()
+    return r.json()
 
 
 def _base_bulk() -> str:
@@ -180,32 +195,72 @@ def pedido_itens(pedido_id: int) -> list[dict]:
         return r.json().get("results", []) or []
 
 
+def solic_itens_da_pr(pr_id: int) -> list[dict]:
+    """Itens de UMA solicitação (via all/items com filtro server-side, rápido)."""
+    out = []
+    params = {"purchaseRequestId": pr_id, "limit": 200, "offset": 0}
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        while True:
+            r = c.get(f"{_base_v1()}/purchase-requests/all/items", params=params)
+            r.raise_for_status()
+            data = r.json(); res = data.get("results", [])
+            out.extend(res)
+            total = (data.get("resultSetMetadata") or {}).get("count", len(out))
+            params["offset"] += 200
+            if params["offset"] >= total or not res:
+                break
+    return out
+
+
+def solic_item_entregas(pr_id: int, item_number: int) -> list[dict]:
+    """Entregas (delivery-requirements) de um item — reaproveitadas ao relançar."""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.get(f"{_base_v1()}/purchase-requests/{pr_id}/items/{item_number}/delivery-requirements")
+        return r.json().get("results", []) if r.status_code == 200 else []
+
+
+def solic_add_itens(pr_id: int, itens: list[dict]) -> int:
+    """POST itens numa solicitação existente. ATENÇÃO: o item nasce AUTORIZADO.
+    itens: [{productId, quantity, unitySymbol, notes?, buildingsApropriations:[...], deliveryRequirements:[...]}]"""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.post(f"{_base_v1()}/purchase-requests/{pr_id}/items", json=itens)
+        if r.status_code >= 400:
+            raise SiengeError(_msg_erro(r), r.status_code)
+        return r.status_code
+
+
+def solic_reprovar_item(pr_id: int, item_number: int) -> int:
+    """PATCH reprova UM item (só funciona se ele ainda estiver aguardando autorização)."""
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        r = c.patch(f"{_base_v1()}/purchase-requests/{pr_id}/items/{item_number}/disapproval")
+        if r.status_code >= 400:
+            raise SiengeError(_msg_erro(r), r.status_code)
+        return r.status_code
+
+
 def solic_item_apropriacao(pr_id: int, item_number: int) -> list[dict]:
     """Subetapas (WBS) que o item da solicitação está pedindo: [{costEstimationItemReference, percentage}]."""
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        r = c.get(f"{_base_v1()}/purchase-requests/{pr_id}/items/{item_number}/buildings-appropriations")
-        if r.status_code != 200:
-            return []
-        return r.json().get("results", []) or []
+    r = _call("GET", f"/purchase-requests/{pr_id}/items/{item_number}/buildings-appropriations")
+    if r.status_code != 200:
+        return []
+    return r.json().get("results", []) or []
 
 
 def solic_autorizar(pr_id: int) -> int:
     """PATCH autoriza todos os itens da solicitação (após dupla aprovação no BOX21)."""
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        r = c.patch(f"{_base_v1()}/purchase-requests/{pr_id}/authorize")
-        if r.status_code >= 400:
-            raise SiengeError(_msg_erro(r), r.status_code)
-        return r.status_code
+    r = _call("PATCH", f"/purchase-requests/{pr_id}/authorize")
+    if r.status_code >= 400:
+        raise SiengeError(_msg_erro(r), r.status_code)
+    return r.status_code
 
 
 def solic_reprovar(pr_id: int, motivo: str) -> int:
     """PATCH reprova todos os itens da solicitação."""
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        r = c.patch(f"{_base_v1()}/purchase-requests/{pr_id}/disapproval",
-                    json={"disapprovalReason": motivo or "Reprovada via BOX21"})
-        if r.status_code >= 400:
-            raise SiengeError(_msg_erro(r), r.status_code)
-        return r.status_code
+    r = _call("PATCH", f"/purchase-requests/{pr_id}/disapproval",
+              json={"disapprovalReason": motivo or "Reprovada via BOX21"})
+    if r.status_code >= 400:
+        raise SiengeError(_msg_erro(r), r.status_code)
+    return r.status_code
 
 
 def _msg_erro(r) -> str:
@@ -233,13 +288,11 @@ def buscar_apropriacao(cost_center_id: int, resource_id) -> list[dict]:
     Retorna os itens de orçamento (WBS) aos quais o insumo pode ser apropriado —
     necessário para movimentos de entrada/saída avulsa (o Sienge exige 100%).
     Ordena por maior quantidade orçada (candidato mais provável primeiro)."""
-    url = f"{_base_v1()}/stock-inventories/{cost_center_id}/items/{resource_id}/building-appropriation"
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        r = c.get(url)
-        if r.status_code == 404:
-            return []
-        r.raise_for_status()
-        res = r.json().get("results", []) or []
+    r = _call("GET", f"/stock-inventories/{cost_center_id}/items/{resource_id}/building-appropriation")
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    res = r.json().get("results", []) or []
     return sorted(res, key=lambda a: -(a.get("quantity") or 0))
 
 

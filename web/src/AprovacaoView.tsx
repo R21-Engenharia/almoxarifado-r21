@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { authAtiva } from './supabase'
 import Loader from './Loader'
-import { api, num, type InsumoOrcamento, type SolicSienge, type SolicSiengeItem, type ItemSubetapa } from './api'
+import { api, num, type InsumoOrcamento, type SolicSienge, type SolicSiengeItem, type ItemSubetapa, type WbsOpcao } from './api'
 import {
   overlays, eventos, meuPapel, aprovar, reprovar, devolver,
   STATUS_SOLIC, STATUS_TONE,
@@ -149,21 +149,26 @@ function DetalheModal({ l, obraNome, podeEng, podePlan, onAcao, onFechar }: {
   const [obs, setObs] = useState('')
   const [proc, setProc] = useState(false)
   const [erro, setErro] = useState('')
+  const [corrigir, setCorrigir] = useState<ItemCtx | null>(null)
 
   useEffect(() => { eventos(l.pr).then(setEvs) }, [l.pr])
 
-  // carrega o contexto (orçado + subetapa pedida) de cada item, em paralelo
+  // carrega o contexto (orçado + subetapa) de cada item — UM DE CADA VEZ, para
+  // não estourar o rate limit do Sienge (429) quando a solicitação tem muitos itens.
   useEffect(() => {
     if (!l.itens.length) return
+    let cancelado = false
     setCtx(l.itens.map(item => ({ item, orc: null, subs: [], loading: true })))
-    l.itens.forEach((item, idx) => {
-      Promise.all([
-        api.insumoOrcamento(l.obra, item.resource_id).catch(() => null),
-        api.itemSubetapa(l.obra, l.pr, item.item_number).then(r => r.subetapas).catch(() => []),
-      ]).then(([orc, subs]) => {
+    ;(async () => {
+      for (let idx = 0; idx < l.itens.length; idx++) {
+        const item = l.itens[idx]
+        const orc = await api.insumoOrcamento(l.obra, item.resource_id).catch(() => null)
+        const subs = await api.itemSubetapa(l.obra, l.pr, item.item_number).then(r => r.subetapas).catch(() => [])
+        if (cancelado) return
         setCtx(prev => prev.map((c, i) => i === idx ? { ...c, orc, subs, loading: false } : c))
-      }).catch(e => setCtx(prev => prev.map((c, i) => i === idx ? { ...c, loading: false, erro: String(e) } : c)))
-    })
+      }
+    })()
+    return () => { cancelado = true }
   }, [l.pr]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const etapa: 'engenharia' | 'planejamento' | null =
@@ -196,7 +201,7 @@ function DetalheModal({ l, obraNome, podeEng, podePlan, onAcao, onFechar }: {
         {algumaDivergencia && <div className="msg bad" style={{ marginTop: 10 }}>⚠ <b>Divergência:</b> há item pedido numa subetapa onde ele <b>não está orçado</b>.</div>}
 
         <div className="ctx-itens">
-          {ctx.map((c, i) => <ItemCard key={i} c={c} />)}
+          {ctx.map((c, i) => <ItemCard key={i} c={c} podeCorrigir={podePlan} onCorrigir={() => setCorrigir(c)} />)}
           {!l.itens.length && <div className="empty">Solicitação já processada no Sienge — detalhe dos itens indisponível.</div>}
         </div>
 
@@ -226,12 +231,15 @@ function DetalheModal({ l, obraNome, podeEng, podePlan, onAcao, onFechar }: {
         )}
         {erro && <div className="msg bad">{erro}</div>}
         {!etapa && <div className="modal-acts"><button className="ghost" onClick={onFechar}>Fechar</button></div>}
+
+        {corrigir && <CorrigirModal obra={l.obra} pr={l.pr} c={corrigir}
+          onDone={() => { setCorrigir(null); onAcao() }} onFechar={() => setCorrigir(null)} />}
       </div>
     </div>
   )
 }
 
-function ItemCard({ c }: { c: ItemCtx }) {
+function ItemCard({ c, podeCorrigir, onCorrigir }: { c: ItemCtx; podeCorrigir: boolean; onCorrigir: () => void }) {
   const { item, orc, subs, loading } = c
   return (
     <div className="ctx-item">
@@ -276,8 +284,106 @@ function ItemCard({ c }: { c: ItemCtx }) {
               )
             })}
           </div>
+          {podeCorrigir && !loading && (
+            <div style={{ marginTop: 10, textAlign: 'right' }}>
+              <button className="mini" onClick={onCorrigir}>✎ Corrigir apropriação</button>
+            </div>
+          )}
         </>
       )}
+    </div>
+  )
+}
+
+/* ---- Corrigir apropriação: relança o mesmo insumo com a apropriação certa ---- */
+function CorrigirModal({ obra, pr, c, onDone, onFechar }: {
+  obra: string; pr: number; c: ItemCtx; onDone: () => void; onFechar: () => void
+}) {
+  const [q, setQ] = useState('')
+  const [achados, setAchados] = useState<WbsOpcao[]>([])
+  const [novas, setNovas] = useState<{ uc_id: number; uc_nome: string | null; wbs_code: string; descricao: string; percentage: number }[]>([])
+  const [reprovar, setReprovar] = useState(true)
+  const [proc, setProc] = useState(false)
+  const [erro, setErro] = useState('')
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    const t = setTimeout(() => { if (q.trim().length >= 2) api.wbsBusca(obra, q).then(r => setAchados(r.subetapas)).catch(() => {}) }, 300)
+    return () => clearTimeout(t)
+  }, [q, obra])
+
+  const soma = novas.reduce((a, n) => a + (n.percentage || 0), 0)
+  const add = (o: WbsOpcao) => {
+    if (novas.find(n => n.wbs_code === o.wbs_code && n.uc_id === o.uc_id)) return
+    setNovas([...novas, { uc_id: o.uc_id, uc_nome: o.uc_nome, wbs_code: o.wbs_code, descricao: o.descricao, percentage: novas.length ? 0 : 100 }])
+    setQ(''); setAchados([])
+  }
+  const setPct = (i: number, v: number) => setNovas(novas.map((n, k) => k === i ? { ...n, percentage: v } : n))
+  const rem = (i: number) => setNovas(novas.filter((_, k) => k !== i))
+
+  const salvar = async () => {
+    if (Math.round(soma) !== 100) { setErro('As apropriações precisam somar 100%.'); return }
+    setProc(true); setErro('')
+    try {
+      const r = await api.corrigirItem({
+        obra, purchase_request_id: pr, item_number: c.item.item_number,
+        apropriacoes: novas.map(n => ({ building_unit_id: n.uc_id, wbs_code: n.wbs_code, percentage: n.percentage })),
+        reprovar_original: reprovar,
+      })
+      setMsg(`✓ Item corrigido relançado no Sienge.${r.reprovado_original ? ' Original reprovado.' : ''}`)
+      setTimeout(onDone, 1600)
+    } catch (e) { setErro(e instanceof Error ? e.message : String(e)); setProc(false) }
+  }
+
+  return (
+    <div className="modal" onClick={() => !proc && onFechar()}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
+        <h3>Corrigir apropriação</h3>
+        <div className="meta" style={{ marginBottom: 10 }}><b>{c.item.descricao}</b> · {num(c.item.quantidade, 2)} {c.item.unidade}</div>
+        <div className="msg" style={{ background: '#e2231a12', border: '1px solid #e2231a2e', color: 'var(--text)', marginBottom: 12 }}>
+          Isto <b>relança o mesmo insumo</b> no Sienge com a apropriação corrigida (o item novo já nasce autorizado, vai pra Compras) e, se marcado, reprova o item original enquanto estiver aguardando.
+        </div>
+
+        <div className="ctx-sub" style={{ marginBottom: 12 }}>
+          <div className="ctx-sub-top"><span className="meta">Apropriação atual (a corrigir)</span></div>
+          {c.subs.map((s, i) => <div key={i} className="meta"><code className="wbs">{s.wbs_code}</code> {s.descricao} {s.uc_nome ? `· ${ucCurta(s.uc_nome)}` : ''} · {num(s.percentual ?? 0, 0)}%</div>)}
+          {c.subs.length === 0 && <div className="meta">—</div>}
+        </div>
+
+        <label className="campo"><span>Apropriação correta — buscar subetapa (código ou nome)</span>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="ex.: contrapiso, 09.005…" /></label>
+        {achados.length > 0 && (
+          <div className="ach-list">{achados.slice(0, 8).map(o =>
+            <button key={`${o.uc_id}-${o.wbs_code}`} className="ach" onClick={() => add(o)}>
+              <span><code className="wbs">{o.wbs_code}</code> {o.descricao}</span>
+              <span className="meta">{ucCurta(o.uc_nome || '')}</span></button>)}</div>
+        )}
+
+        {novas.length > 0 && (
+          <div className="ctx-sub" style={{ marginTop: 10 }}>
+            {novas.map((n, i) => (
+              <div key={i} className="plano-linha">
+                <span className="desc" style={{ fontSize: 13 }}><code className="wbs">{n.wbs_code}</code> {n.descricao}<br /><span className="meta">{ucCurta(n.uc_nome || '')}</span></span>
+                <input type="number" min={0} max={100} className="qtd" style={{ width: 66 }} value={n.percentage}
+                  onChange={e => setPct(i, parseFloat(e.target.value) || 0)} /><span className="u">%</span>
+                <button className="mini" onClick={() => rem(i)}>×</button>
+              </div>
+            ))}
+            <div className="meta" style={{ textAlign: 'right', marginTop: 6, color: Math.round(soma) === 100 ? 'var(--ok)' : 'var(--ruptura)' }}>Soma: {num(soma, 0)}% {Math.round(soma) === 100 ? '✓' : '(precisa 100%)'}</div>
+          </div>
+        )}
+
+        <label className="campo" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+          <input type="checkbox" checked={reprovar} onChange={e => setReprovar(e.target.checked)} style={{ width: 16, height: 16 }} />
+          <span style={{ margin: 0 }}>Reprovar o item original (se ainda estiver aguardando)</span></label>
+
+        {erro && <div className="msg bad">{erro}</div>}
+        {msg && <div className="msg ok">{msg}</div>}
+        <div className="modal-acts">
+          <button className="ghost" onClick={onFechar} disabled={proc}>Cancelar</button>
+          <button className="cta" onClick={salvar} disabled={proc || novas.length === 0}>{proc ? 'Enviando…' : 'Relançar corrigido no Sienge'}</button>
+        </div>
+      </div>
     </div>
   )
 }
