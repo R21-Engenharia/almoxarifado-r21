@@ -29,6 +29,7 @@ _carregar_env()
 
 from fastapi import FastAPI, HTTPException, Header, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 import sienge
@@ -45,6 +46,8 @@ _origins = [o.strip() for o in os.environ.get("ALMOX_CORS_ORIGINS", "*").split("
 app.add_middleware(
     CORSMiddleware, allow_origins=_origins, allow_methods=["*"], allow_headers=["*"],
 )
+# comprime as respostas (JSON grande do catálogo/estoque cai ~8-10x) — leve no 4G do galpão
+app.add_middleware(GZipMiddleware, minimum_size=800)
 
 audit.init_db()
 
@@ -302,7 +305,10 @@ def usuarios_salvar(corpo: UsuarioIn, usuario: str = Depends(usuario_gestor)):
 def material(obra: str = Query(...), janela_dias: int = 90,
              usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
-    return _analise(obra, janela_dias)
+    res = _analise(obra, janela_dias)
+    # a tela de Estoque só usa kpis + alertas + parados; a lista completa (1500+ itens)
+    # vai pelo /catalogo quando é preciso — não trafega ~1MB à toa aqui.
+    return {**res, "itens": []}
 
 
 # cache de RESULTADO dos motores (evita reprocessar 13k+ movimentos a cada abertura).
