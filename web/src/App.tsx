@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from 'react'
 import {
   api, brl, num, familiaCurta, STATUS_LABEL,
   type Item, type Material, type Movimento, type Obra, type Status, type EscritaItem,
@@ -6,18 +6,19 @@ import {
 import { supabase, authAtiva } from './supabase'
 import { Avatar, PerfilModal } from './PerfilCard'
 import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './perfil'
-import Financeiro from './Financeiro'
-import Posicao from './Posicao'
-import Consumo from './Consumo'
-import Requisicao from './Requisicao'
-import Fornecedores from './Fornecedores'
-import Recebimentos from './Recebimentos'
-import Suprimentos from './Suprimentos'
-import Equipamentos from './EquipamentosView'
-import Aprovacoes from './AprovacaoView'
 import Loader from './Loader'
-import Usuarios from './UsuariosView'
 import { podeVer } from './modulos'
+// módulos carregados sob demanda (code-splitting): abrir uma tela não baixa as outras
+const Financeiro = lazy(() => import('./Financeiro'))
+const Posicao = lazy(() => import('./Posicao'))
+const Consumo = lazy(() => import('./Consumo'))
+const Requisicao = lazy(() => import('./Requisicao'))
+const Fornecedores = lazy(() => import('./Fornecedores'))
+const Recebimentos = lazy(() => import('./Recebimentos'))
+const Suprimentos = lazy(() => import('./Suprimentos'))
+const Equipamentos = lazy(() => import('./EquipamentosView'))
+const Aprovacoes = lazy(() => import('./AprovacaoView'))
+const Usuarios = lazy(() => import('./UsuariosView'))
 import { type Conta } from './api'
 import iconFinanceiro from './assets/menu-icons/financeiro.webp'
 import iconPosicao from './assets/menu-icons/posicao.webp'
@@ -212,16 +213,18 @@ export default function App() {
 
         <main className="area">
           {!obra && !erroAcesso && <Loader label={TITULOS[secao].t.toLowerCase()} dica="Conectando ao Sienge e listando as obras…" />}
-          {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
-          {obra && secao === 'recebimentos' && <Recebimentos obra={obra} />}
-          {obra && secao === 'suprimentos' && <Suprimentos obra={obra} />}
-          {secao === 'usuarios' && <Usuarios obras={obras} />}
-          {obra && secao === 'posicao' && <Posicao obra={obra} />}
-          {obra && secao === 'consumo' && <Consumo obra={obra} />}
-          {obra && secao === 'fornecedores' && <Fornecedores obra={obra} />}
-          {obra && secao === 'equipamentos' && <Equipamentos obra={obra} operador={nomeExibicao} abrirId={eqParam} />}
-          {obra && secao === 'aprovacao' && <Aprovacoes obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} />}
-          {obra && secao === 'requisicao' && <Requisicao obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} operador={nomeExibicao} />}
+          <Suspense fallback={<Loader label={TITULOS[secao].t.toLowerCase()} />}>
+            {obra && secao === 'financeiro' && <Financeiro obra={obra} />}
+            {obra && secao === 'recebimentos' && <Recebimentos obra={obra} />}
+            {obra && secao === 'suprimentos' && <Suprimentos obra={obra} />}
+            {secao === 'usuarios' && <Usuarios obras={obras} />}
+            {obra && secao === 'posicao' && <Posicao obra={obra} />}
+            {obra && secao === 'consumo' && <Consumo obra={obra} />}
+            {obra && secao === 'fornecedores' && <Fornecedores obra={obra} />}
+            {obra && secao === 'equipamentos' && <Equipamentos obra={obra} operador={nomeExibicao} abrirId={eqParam} />}
+            {obra && secao === 'aprovacao' && <Aprovacoes obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} />}
+            {obra && secao === 'requisicao' && <Requisicao obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} operador={nomeExibicao} />}
+          </Suspense>
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
           {obra && secao === 'historico' && <Historico obra={obra} />}

@@ -152,7 +152,7 @@ def _movimentos(prevision_id: str, force: bool = False) -> list[dict]:
     o = obra_ou_erro(prevision_id)
     _MOVS_CACHE[prevision_id] = sienge.coletar_movimentos(o["building_id"])
     _salvar_snapshot(prevision_id)
-    _ANALISE_CACHE.pop(prevision_id, None)
+    _invalidar_obra(prevision_id)
     return _MOVS_CACHE[prevision_id]
 
 
@@ -201,7 +201,7 @@ def _anexar_local(prevision_id: str, operacao: str, corpo, tipo_id: int):
             "supplierName": None,
         })
     _salvar_snapshot(prevision_id)
-    _ANALISE_CACHE.pop(prevision_id, None)
+    _invalidar_obra(prevision_id)
 
 
 # ---------------------------------------------------------------- leitura
@@ -305,18 +305,38 @@ def material(obra: str = Query(...), janela_dias: int = 90,
     return _analise(obra, janela_dias)
 
 
+# cache de RESULTADO dos motores (evita reprocessar 13k+ movimentos a cada abertura).
+# Chave inclui a data => expira sozinho a cada dia; some quando os dados são atualizados.
+_ENGINE_CACHE: dict = {}
+
+
+def _memo(obra: str, tag: str, fn):
+    key = (obra, f"{tag}:{date.today().isoformat()}")
+    if key in _ENGINE_CACHE:
+        return _ENGINE_CACHE[key]
+    r = fn()
+    _ENGINE_CACHE[key] = r
+    return r
+
+
+def _invalidar_obra(prevision_id: str):
+    _ANALISE_CACHE.pop(prevision_id, None)
+    for k in [k for k in _ENGINE_CACHE if k[0] == prevision_id]:
+        _ENGINE_CACHE.pop(k, None)
+
+
 @app.get("/api/estoque/financeiro")
 def financeiro(obra: str = Query(...), meses: int = 12,
                usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
-    return engine.financeiro(_movimentos(obra), hoje=date.today(), meses=meses)
+    return _memo(obra, f"financeiro:{meses}", lambda: engine.financeiro(_movimentos(obra), hoje=date.today(), meses=meses))
 
 
 @app.get("/api/estoque/consumo")
 def consumo(obra: str = Query(...), meses: int = 12,
             usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
-    return engine.consumo(_movimentos(obra), hoje=date.today(), meses=meses)
+    return _memo(obra, f"consumo:{meses}", lambda: engine.consumo(_movimentos(obra), hoje=date.today(), meses=meses))
 
 
 # ---- compras (purchase-orders) --------------------------------------------
@@ -339,6 +359,7 @@ def _pedidos(prevision_id: str, force: bool = False) -> list[dict]:
         return []
     o = obra_ou_erro(prevision_id)
     _PEDIDOS_CACHE[prevision_id] = sienge.coletar_pedidos(o["building_id"])
+    _invalidar_obra(prevision_id)   # fornecedores/recebimentos/suprimentos dependem dos pedidos
     try:
         os.makedirs(_DATA_DIR, exist_ok=True)
         json.dump(_PEDIDOS_CACHE[prevision_id], open(p, "w", encoding="utf-8"), ensure_ascii=False)
@@ -360,16 +381,16 @@ def _nomes_fornecedores(prevision_id: str) -> dict[str, str]:
 def fornecedores(obra: str = Query(...), meses: int = 12,
                  usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
-    return engine.fornecedores(_pedidos(obra), _nomes_fornecedores(obra),
-                               hoje=date.today(), meses=meses)
+    return _memo(obra, f"fornecedores:{meses}", lambda: engine.fornecedores(
+        _pedidos(obra), _nomes_fornecedores(obra), hoje=date.today(), meses=meses))
 
 
 @app.get("/api/estoque/recebimentos")
 def recebimentos(obra: str = Query(...), meses: int = 12,
                  usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
-    return engine.recebimentos(_pedidos(obra), _movimentos(obra),
-                               _nomes_fornecedores(obra), hoje=date.today(), meses=meses)
+    return _memo(obra, f"recebimentos:{meses}", lambda: engine.recebimentos(
+        _pedidos(obra), _movimentos(obra), _nomes_fornecedores(obra), hoje=date.today(), meses=meses))
 
 
 @app.get("/api/estoque/pedido-itens")
@@ -401,11 +422,14 @@ def suprimentos(obra: str = Query(...), cobertura_alvo: int = 45,
     """MRP preditivo: junta a análise de consumo (ruptura por insumo), o lead time
     real por fornecedor (recebimentos) e o % no prazo (fornecedores)."""
     obra_ou_erro(obra)
-    nomes = _nomes_fornecedores(obra)
-    receb = engine.recebimentos(_pedidos(obra), _movimentos(obra), nomes, hoje=date.today())
-    forn = engine.fornecedores(_pedidos(obra), nomes, hoje=date.today())
-    return engine.suprimentos(_analise(obra)["itens"], receb["lead_fornecedores"],
-                              forn["fornecedores"], hoje=date.today(), cobertura_alvo=cobertura_alvo)
+
+    def _calc():
+        nomes = _nomes_fornecedores(obra)
+        receb = engine.recebimentos(_pedidos(obra), _movimentos(obra), nomes, hoje=date.today())
+        forn = engine.fornecedores(_pedidos(obra), nomes, hoje=date.today())
+        return engine.suprimentos(_analise(obra)["itens"], receb["lead_fornecedores"],
+                                  forn["fornecedores"], hoje=date.today(), cobertura_alvo=cobertura_alvo)
+    return _memo(obra, f"suprimentos:{cobertura_alvo}", _calc)
 
 
 # ---- aprovação: contexto orçamento × apropriação ---------------------------
