@@ -91,6 +91,18 @@ def usuario_gestor(authorization: str | None = Header(default=None)) -> str:
         raise HTTPException(403, "Você não tem permissão para gerenciar usuários.")
     return email
 
+
+def usuario_operador(authorization: str | None = Header(default=None)) -> str:
+    """Exige permissão de operar o almoxarifado (baixa/entrada) — flag operar ou role admin.
+    Assim o almoxarife (role user + operar) consegue operar, sem precisar ser admin."""
+    email = usuario_logado(authorization)
+    if not _auth_ativo():
+        return email  # dev local
+    p = supa.perms_do_email(email) or {}
+    if not (p.get("operar") or (p.get("role") or "").lower() == "admin"):
+        raise HTTPException(403, "Você não tem permissão para operar o almoxarifado (baixa/entrada).")
+    return email
+
 import json
 from datetime import datetime
 
@@ -569,108 +581,6 @@ def item_subetapa(obra: str = Query(...), pr_id: int = Query(...), item_number: 
     return {"subetapas": subs}
 
 
-@app.get("/api/aprovacao/wbs-busca")
-def wbs_busca(obra: str = Query(...), q: str = Query(""), uc: str | None = None,
-              usuario: str = Depends(usuario_logado)):
-    """Busca subetapas (WBS) do orçamento por código ou descrição, por UC.
-    Serve para escolher a apropriação CERTA ao corrigir um item."""
-    obra_ou_erro(obra)
-    mapa = _wbs_map(obra)
-    ucs = mapa.get("ucs", {})
-    ql = q.strip().lower()
-    out = []
-    for sid, codes in mapa.get("wbs", {}).items():
-        if uc and str(uc) != sid:
-            continue
-        for code, info in codes.items():
-            desc = info.get("descricao") or ""
-            if ql and ql not in code.lower() and ql not in desc.lower():
-                continue
-            out.append({"uc_id": int(sid) if sid.isdigit() else sid, "uc_nome": ucs.get(sid),
-                        "wbs_code": code, "descricao": desc, "qtd_orcada": info.get("qtd_orcada")})
-            if len(out) >= 40:
-                break
-        if len(out) >= 40:
-            break
-    return {"subetapas": out, "ucs": ucs}
-
-
-class ApropRef(BaseModel):
-    building_unit_id: int
-    wbs_code: str
-    percentage: float
-
-
-class CorrigirItem(BaseModel):
-    obra: str
-    purchase_request_id: int
-    item_number: int
-    apropriacoes: list[ApropRef]
-    reprovar_original: bool = True
-
-
-@app.post("/api/aprovacao/corrigir-item")
-def corrigir_item(corpo: CorrigirItem, usuario: str = Depends(usuario_logado)):
-    """Corrige a apropriação de um item RELANÇANDO o mesmo insumo com a apropriação
-    certa (a API do Sienge não permite editar apropriação existente). Opcionalmente
-    reprova o item original (se ainda estiver aguardando). O item novo nasce AUTORIZADO."""
-    obra_ou_erro(corpo.obra)
-    if _modo_demo():
-        raise HTTPException(422, "Indisponível em modo demonstração.")
-    soma = round(sum(a.percentage for a in corpo.apropriacoes), 2)
-    if abs(soma - 100.0) > 0.01:
-        raise HTTPException(422, f"As apropriações precisam somar 100% (soma atual: {soma}%).")
-    # dados do item original
-    itens = sienge.solic_itens_da_pr(corpo.purchase_request_id)
-    orig = next((i for i in itens if i.get("itemNumber") == corpo.item_number), None)
-    if not orig:
-        raise HTTPException(404, "Item original não encontrado na solicitação.")
-    entregas = sienge.solic_item_entregas(corpo.purchase_request_id, corpo.item_number)
-    if entregas:
-        dr = [{"deliveryRequirementNumber": e.get("deliveryRequirementNumber", i + 1),
-               "requirementDate": e.get("requirementDate"),
-               "requirementQuantity": e.get("requirementQuantity") or orig.get("quantity"),
-               "openQuantity": True} for i, e in enumerate(entregas)]
-    else:
-        dr = [{"deliveryRequirementNumber": 1, "requirementDate": date.today().isoformat(),
-               "requirementQuantity": orig.get("quantity"), "openQuantity": True}]
-    novo = {
-        "productId": orig.get("productId"),
-        "quantity": orig.get("quantity"),
-        "unitySymbol": orig.get("unitySymbol"),
-        "notes": f"Correção de apropriação do item {corpo.item_number} (BOX21)",
-        "buildingsApropriations": [{"buildingUnitId": a.building_unit_id,
-                                    "costEstimationItemReference": a.wbs_code,
-                                    "percentage": a.percentage} for a in corpo.apropriacoes],
-        "deliveryRequirements": dr,
-    }
-    if orig.get("detailId"):
-        novo["detailId"] = orig["detailId"]
-    if orig.get("trademarkId"):
-        novo["trademarkId"] = orig["trademarkId"]
-
-    # O Sienge NÃO deixa ter o mesmo insumo duplicado na solicitação — então é
-    # preciso REPROVAR o item errado ANTES de relançar o corrigido. Só é possível
-    # se o item ainda estiver aguardando autorização.
-    if orig.get("authorized"):
-        raise HTTPException(422, "O item original já está autorizado — não dá para corrigir pela API. "
-                                 "Ajuste direto no Sienge.")
-    reprovado = False
-    if corpo.reprovar_original and not orig.get("disapproved"):
-        try:
-            sienge.solic_reprovar_item(corpo.purchase_request_id, corpo.item_number)
-            reprovado = True
-        except sienge.SiengeError as e:
-            raise HTTPException(422, f"Não consegui reprovar o item original: {e.mensagem}")
-    try:
-        sienge.solic_add_itens(corpo.purchase_request_id, [novo])
-    except sienge.SiengeError as e:
-        raise HTTPException(422, f"Item original {'reprovado' if reprovado else 'mantido'}, "
-                                 f"mas falhou ao relançar o corrigido: {e.mensagem}")
-    _PEND_CACHE["ts"] = 0.0
-    return {"ok": True, "reprovado_original": reprovado}
-
-
 class SolicAcao(BaseModel):
     purchase_request_id: int
     motivo: str | None = None
@@ -954,7 +864,7 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
 
 @app.post("/api/estoque/baixa")
 def baixa(corpo: Escrita, obra: str = Query(...),
-          usuario: str = Depends(usuario_admin)):
+          usuario: str = Depends(usuario_operador)):
     if not corpo.itens:
         raise HTTPException(400, "Nenhum item informado")
     return _gravar(obra, "baixa", corpo, usuario)
@@ -962,7 +872,7 @@ def baixa(corpo: Escrita, obra: str = Query(...),
 
 @app.post("/api/estoque/entrada")
 def entrada(corpo: Escrita, obra: str = Query(...),
-            usuario: str = Depends(usuario_admin)):
+            usuario: str = Depends(usuario_operador)):
     if not corpo.itens:
         raise HTTPException(400, "Nenhum item informado")
     return _gravar(obra, "entrada", corpo, usuario)
