@@ -65,6 +65,57 @@ export default function CurvaAbc({ obra }: { obra: string }) {
     baixarCSV(`curva_abc_${obra}_${d.hoje}.csv`, [head, ...rows])
   }
 
+  // Excel formatado (HTML-table lido pelo Excel/Sheets): cabeçalho estilizado,
+  // classes coloridas, resumo no topo e números formatados — bom pra validar.
+  const exportarExcel = () => {
+    if (!d) return
+    const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const dataBr = d.hoje.split('-').reverse().join('/')
+    const abcBg = (c: string) => c === 'A' ? '#e2231a' : c === 'B' ? '#f2b705' : c === 'C' ? '#5b5b63' : '#ffffff'
+    const abcFg = (c: string) => c === 'B' ? '#241c00' : c === '—' ? '#888' : '#ffffff'
+    const cabec = ['Código', 'Descrição', 'Grupo', 'Família', 'Macrofamília', 'Unid.', 'Saldo',
+      'Custo unit (R$)', 'Valor em estoque (R$)', '% total', '% acum.', 'Classe', 'Status',
+      'Últ. entrada', 'Últ. consumo', 'Dias s/ consumo']
+    const NC = cabec.length
+    const linhas = d.itens.map(i => {
+      const dias = i.ultimo_consumo ? (diasDesde(i.ultimo_consumo, d.hoje) ?? '') : 'nunca'
+      return `<tr>
+        <td>${esc(i.resource_id)}</td><td>${esc(i.descricao)}</td><td>${esc(i.grupo)}</td>
+        <td>${esc(i.familia)}</td><td>${esc(i.macro)}</td><td class="ce">${esc(i.unidade)}</td>
+        <td class="num">${i.saldo}</td><td class="num">${i.custo_unit}</td><td class="num b">${i.valor_saldo}</td>
+        <td class="ri">${num(i.pct_do_total, 2)}%</td><td class="ri">${i.pct_acumulado === null ? '—' : num(i.pct_acumulado, 1) + '%'}</td>
+        <td class="ce" style="background:${abcBg(i.abc)};color:${abcFg(i.abc)};font-weight:bold">${i.abc}</td>
+        <td>${esc(STATUS_LABEL[i.status] || i.status)}</td>
+        <td class="ce">${fmtData(i.ultima_entrada)}</td>
+        <td class="ce">${i.ultimo_consumo ? fmtData(i.ultimo_consumo) : '<i style="color:#999">nunca</i>'}</td>
+        <td class="ce">${dias}</td></tr>`
+    }).join('')
+    const resumoCel = (cls: 'A' | 'B' | 'C', span: number) => {
+      const r = d.resumo[cls]
+      return `<td colspan="${span}" style="background:${abcBg(cls)};color:${abcFg(cls)};font-weight:bold;text-align:center">Classe ${cls} — ${num(r.n_itens)} itens · ${brl(r.valor)} · ${r.pct_valor}% do capital</td>`
+    }
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">
+<style>
+table{border-collapse:collapse}
+td,th{font-family:Calibri,Arial,sans-serif;font-size:11pt;border:0.5pt solid #c8c8cc;padding:4px 8px;mso-data-placement:same-cell}
+th{background:#b3140d;color:#fff;font-weight:bold;text-align:center;border-color:#8a0f09}
+.num{mso-number-format:"\\#\\,\\#\\#0\\.00";text-align:right}
+.ri{text-align:right}.ce{text-align:center}.b{font-weight:bold}
+</style></head><body><table>
+<tr><td colspan="${NC}" style="font-size:17pt;font-weight:bold;background:#0c0c0e;color:#fff;border-color:#0c0c0e">BOX21 · Curva ABC do Estoque</td></tr>
+<tr><td colspan="${NC}" style="background:#0c0c0e;color:#c9c9cf;border-color:#0c0c0e">Obra ${esc(obra)} · gerado em ${dataBr} · ${num(d.n_itens)} itens · capital em estoque ${brl(d.valor_total)}</td></tr>
+<tr><td colspan="${NC}" style="border:none;height:4px"></td></tr>
+<tr>${resumoCel('A', 5)}${resumoCel('B', 6)}${resumoCel('C', 5)}</tr>
+<tr><td colspan="${NC}" style="border:none;height:6px"></td></tr>
+<tr>${cabec.map(h => `<th>${h}</th>`).join('')}</tr>
+${linhas}
+</table></body></html>`
+    const blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob); a.download = `curva_abc_${obra}_${d.hoje}.xls`; a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  }
+
   if (err) return <div className="err">Falha ao carregar: {err}</div>
   if (!d) return <Loader label="a curva ABC" dica="Classificando o capital em estoque por item…" />
 
@@ -105,7 +156,8 @@ export default function CurvaAbc({ obra }: { obra: string }) {
               <button className={classe === 'B' ? 'on' : ''} onClick={() => setClasse('B')}>B</button>
               <button className={classe === 'C' ? 'on' : ''} onClick={() => setClasse('C')}>C</button>
             </div>
-            <button className="mini" onClick={exportar}>⬇ Exportar (Excel/CSV)</button>
+            <button className="mini forte" onClick={exportarExcel}>⬇ Excel formatado</button>
+            <button className="mini" onClick={exportar}>CSV puro</button>
           </div>
         </div>
 

@@ -588,6 +588,8 @@ tr.estornado { opacity: .5; }
 .abc-tools .busca { flex: 1; min-width: 200px; background: var(--panel2); border: 1px solid var(--line);
   color: var(--text); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
 .abc-tools .busca:focus { outline: none; border-color: var(--accent); }
+.chart-ctrls .mini.forte { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.chart-ctrls .mini.forte:hover { background: var(--accent-d); border-color: var(--accent-d); }
 .abc-nota { font-size: 12px; color: var(--muted); padding: 10px 4px 2px; text-align: center; }
 .tbl th.c, .tbl td.c { text-align: center; }
 .nunca { color: var(--muted); font-style: italic; }
