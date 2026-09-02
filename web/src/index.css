@@ -555,8 +555,46 @@ tr.estornado { opacity: .5; }
 .ident-card button.google { background: #fff; color: #1f2937; display: flex; align-items: center; justify-content: center; gap: 10px; }
 .ident-card button.google:hover { background: #f1f3f5; }
 
+/* ---------------------------------------------------- Curva ABC (Estoque) */
+.abc { display: flex; flex-direction: column; gap: 16px; }
+.abc-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.abc-card { position: relative; overflow: hidden; }
+.abc-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.abc-card.abc-A::before { background: var(--accent); box-shadow: 0 0 12px 1px #e2231a88; }
+.abc-card.abc-B::before { background: var(--baixo); box-shadow: 0 0 12px 1px #f2b70588; }
+.abc-card.abc-C::before { background: var(--muted); }
+.abc-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.abc-card-tit { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.abc-card-hint { font-size: 11px; color: var(--muted); margin-top: 6px; opacity: .8; }
+.abc-total .kpi-big { color: var(--text); }
+
+.abc-badge { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 7px; font-weight: 800;
+  font-size: 12.5px; font-family: var(--font-display); color: #fff; }
+.abc-badge.abc-A { background: var(--accent); box-shadow: 0 0 10px #e2231a55; }
+.abc-badge.abc-B { background: var(--baixo); color: #241c00; }
+.abc-badge.abc-C { background: #3a3a40; color: var(--text); }
+.abc-badge.abc-x { background: transparent; color: var(--muted); border: 1px dashed var(--line); }
+
+.pareto { display: flex; height: 16px; border-radius: 999px; overflow: hidden;
+  background: var(--panel2); border: 1px solid var(--line); }
+.pareto-seg { display: flex; align-items: center; justify-content: center; font-size: 10px;
+  font-weight: 800; color: #fff; font-family: var(--font-display); transition: width .4s ease; }
+.pareto-seg.abc-A { background: var(--accent); }
+.pareto-seg.abc-B { background: var(--baixo); color: #241c00; }
+.pareto-seg.abc-C { background: #52525b; }
+
+.abc-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 4px 0 12px; }
+.abc-tools .busca { flex: 1; min-width: 200px; background: var(--panel2); border: 1px solid var(--line);
+  color: var(--text); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+.abc-tools .busca:focus { outline: none; border-color: var(--accent); }
+.abc-nota { font-size: 12px; color: var(--muted); padding: 10px 4px 2px; text-align: center; }
+.tbl th.c, .tbl td.c { text-align: center; }
+.nunca { color: var(--muted); font-style: italic; }
+
 /* desktop */
 @media (min-width: 720px) {
   .kpis { grid-template-columns: repeat(4, 1fr); }
   .obra-sel { max-width: none; }
+  .abc-cards { grid-template-columns: repeat(4, 1fr); }
 }

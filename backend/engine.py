@@ -66,6 +66,7 @@ def agregar(movimentos: list[dict]) -> dict[str, dict]:
                 "fornecedores": set(),
                 "primeiro_mov": dt,
                 "ultimo_mov": dt,
+                "ultima_entrada": None,
                 "ultimo_consumo": None,
                 "n_movs": 0,
             }
@@ -86,6 +87,8 @@ def agregar(movimentos: list[dict]) -> dict[str, dict]:
         if io == "INPUT":
             a["entrada_qtd"] += qtd
             a["valor_entrada"] += qtd * valor
+            if dt and (not a["ultima_entrada"] or dt > a["ultima_entrada"]):
+                a["ultima_entrada"] = dt
         else:
             a["saida_qtd"] += qtd
 
@@ -181,6 +184,7 @@ def analisar(movimentos: list[dict], hoje: date | None = None,
             "impacto_dia": round(impacto_dia, 2),
             "status": st,
             "ultimo_consumo": a["ultimo_consumo"].isoformat() if a["ultimo_consumo"] else None,
+            "ultima_entrada": a["ultima_entrada"].isoformat() if a["ultima_entrada"] else None,
             "ultimo_mov": a["ultimo_mov"].isoformat() if a["ultimo_mov"] else None,
             "n_movs": a["n_movs"],
             "fornecedores": sorted(a["fornecedores"]),

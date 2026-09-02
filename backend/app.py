@@ -323,6 +323,59 @@ def material(obra: str = Query(...), janela_dias: int = 90,
     return {**res, "itens": []}
 
 
+def _linha_abc(i: dict, pct: float, acum, cls: str) -> dict:
+    """Linha enxuta da curva ABC (pra exportação e validação com o almoxarife)."""
+    return {
+        "resource_id": i["resource_id"],
+        "descricao": i["descricao"],
+        "grupo": i.get("grupo_sienge") or i.get("grupo") or "",
+        "familia": i.get("familia") or "",
+        "macro": i.get("macro") or "",
+        "unidade": i["unidade"],
+        "saldo": i["saldo"],
+        "custo_unit": i["custo_unit"],
+        "valor_saldo": i["valor_saldo"],
+        "pct_do_total": round(pct, 3),
+        "pct_acumulado": (round(acum, 3) if acum is not None else None),
+        "abc": cls,
+        "status": i["status"],
+        "ultima_entrada": i.get("ultima_entrada"),
+        "ultimo_consumo": i.get("ultimo_consumo"),
+    }
+
+
+@app.get("/api/estoque/curva-abc")
+def curva_abc(obra: str = Query(...), janela_dias: int = 90,
+              usuario: str = Depends(usuario_logado)):
+    """Curva ABC por capital em estoque + última entrada/consumo por item.
+    A/B/C pelo % acumulado do valor (80/95). Itens sem saldo entram como '—'."""
+    obra_ou_erro(obra)
+    res = _analise(obra, janela_dias)
+    itens = res["itens"]
+    com = sorted((i for i in itens if i["valor_saldo"] > 0),
+                 key=lambda x: -x["valor_saldo"])
+    total = sum(i["valor_saldo"] for i in com)
+    linhas: list[dict] = []
+    acum = 0.0
+    for i in com:
+        pct = (i["valor_saldo"] / total * 100) if total else 0.0
+        # classe pelo acumulado ANTES do item (o que cruza 80% ainda é A)
+        cls = "A" if acum < 80 else ("B" if acum < 95 else "C")
+        acum += pct
+        linhas.append(_linha_abc(i, pct, acum, cls))
+    for i in sorted((i for i in itens if i["valor_saldo"] <= 0),
+                    key=lambda x: (x["descricao"] or "")):
+        linhas.append(_linha_abc(i, 0.0, None, "—"))
+    resumo = {}
+    for cls in ("A", "B", "C"):
+        grp = [l for l in linhas if l["abc"] == cls]
+        v = sum(l["valor_saldo"] for l in grp)
+        resumo[cls] = {"n_itens": len(grp), "valor": round(v, 2),
+                       "pct_valor": round(v / total * 100, 1) if total else 0.0}
+    return {"hoje": res["hoje"], "valor_total": round(total, 2),
+            "n_itens": len(linhas), "resumo": resumo, "itens": linhas}
+
+
 # cache de RESULTADO dos motores (evita reprocessar 13k+ movimentos a cada abertura).
 # Chave inclui a data => expira sozinho a cada dia; some quando os dados são atualizados.
 _ENGINE_CACHE: dict = {}

@@ -16,6 +16,7 @@ const Requisicao = lazy(() => import('./Requisicao'))
 const Fornecedores = lazy(() => import('./Fornecedores'))
 const Recebimentos = lazy(() => import('./Recebimentos'))
 const Suprimentos = lazy(() => import('./Suprimentos'))
+const CurvaAbc = lazy(() => import('./CurvaAbc'))
 const Equipamentos = lazy(() => import('./EquipamentosView'))
 const Aprovacoes = lazy(() => import('./AprovacaoView'))
 const Usuarios = lazy(() => import('./UsuariosView'))
@@ -293,6 +294,7 @@ function Painel({ obra }: { obra: string }) {
   const [d, setD] = useState<Material | null>(null)
   const [err, setErr] = useState('')
   const [atualizando, setAtualizando] = useState(false)
+  const [aba, setAba] = useState<'riscos' | 'abc'>('riscos')
   const carregar = () => { setErr(''); api.material(obra).then(setD).catch(e => setErr(e instanceof Error ? e.message : String(e))) }
   useEffect(() => { setD(null); carregar() }, [obra])
   const atualizar = async () => {
@@ -307,34 +309,45 @@ function Painel({ obra }: { obra: string }) {
   return (
     <div className="painel">
       <div className="painel-topo">
+        <div className="seg sm">
+          <button className={aba === 'riscos' ? 'on' : ''} onClick={() => setAba('riscos')}>Riscos & capital</button>
+          <button className={aba === 'abc' ? 'on' : ''} onClick={() => setAba('abc')}>Curva ABC</button>
+        </div>
         <button className="mini" onClick={atualizar} disabled={atualizando}>
           {atualizando ? 'Atualizando do Sienge… (~1 min)' : '↻ Atualizar do Sienge'}
         </button>
       </div>
-      <div className="kpis">
-        <Kpi label="Insumos" v={num(k.n_insumos)} />
-        <Kpi label="Capital em estoque" v={brl(k.valor_em_estoque)} />
-        <Kpi label="Capital parado" v={brl(k.valor_parado)} tone="warn" />
-        <Kpi label="Alertas" v={num((k.resumo_status.ruptura || 0) + (k.resumo_status.critico || 0) + (k.resumo_status.baixo || 0))} tone="bad" />
-      </div>
+      {aba === 'abc' && (
+        <Suspense fallback={<Loader label="a curva ABC" />}>
+          <CurvaAbc obra={obra} />
+        </Suspense>
+      )}
+      {aba === 'riscos' && <>
+        <div className="kpis">
+          <Kpi label="Insumos" v={num(k.n_insumos)} />
+          <Kpi label="Capital em estoque" v={brl(k.valor_em_estoque)} />
+          <Kpi label="Capital parado" v={brl(k.valor_parado)} tone="warn" />
+          <Kpi label="Alertas" v={num((k.resumo_status.ruptura || 0) + (k.resumo_status.critico || 0) + (k.resumo_status.baixo || 0))} tone="bad" />
+        </div>
 
-      <div className="status-strip">
-        {STATUS_ORDER.map(s => (
-          <div key={s} className={`ss ${s}`}>
-            <b>{k.resumo_status[s] || 0}</b><span>{STATUS_LABEL[s]}</span>
-          </div>
-        ))}
-      </div>
+        <div className="status-strip">
+          {STATUS_ORDER.map(s => (
+            <div key={s} className={`ss ${s}`}>
+              <b>{k.resumo_status[s] || 0}</b><span>{STATUS_LABEL[s]}</span>
+            </div>
+          ))}
+        </div>
 
-      <Section title={`Risco de ruptura (${d.alertas.length})`}>
-        {d.alertas.length === 0 ? <Empty>Nenhum alerta de ruptura.</Empty> :
-          <ItemTable itens={d.alertas} cols={['cobertura', 'saldo', 'impacto']} />}
-      </Section>
+        <Section title={`Risco de ruptura (${d.alertas.length})`}>
+          {d.alertas.length === 0 ? <Empty>Nenhum alerta de ruptura.</Empty> :
+            <ItemTable itens={d.alertas} cols={['cobertura', 'saldo', 'impacto']} />}
+        </Section>
 
-      <Section title={`Capital parado (${d.parados.length})`}>
-        {d.parados.length === 0 ? <Empty>Nada parado.</Empty> :
-          <ItemTable itens={d.parados} cols={['saldo', 'valor', 'ultimo']} />}
-      </Section>
+        <Section title={`Capital parado (${d.parados.length})`}>
+          {d.parados.length === 0 ? <Empty>Nada parado.</Empty> :
+            <ItemTable itens={d.parados} cols={['saldo', 'valor', 'ultimo']} />}
+        </Section>
+      </>}
     </div>
   )
 }

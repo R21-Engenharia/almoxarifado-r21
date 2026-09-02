@@ -134,6 +134,7 @@ export interface Item {
   impacto_dia: number
   status: Status
   ultimo_consumo: string | null
+  ultima_entrada?: string | null
   ultimo_mov: string | null
   n_movs: number
   fornecedores: string[]
@@ -173,6 +174,34 @@ export interface Movimento {
   sienge_movement_id: string | null
   estornado: number
   estorno_de: number | null
+}
+
+export type ClasseABC = 'A' | 'B' | 'C' | '—'
+
+export interface LinhaABC {
+  resource_id: string
+  descricao: string
+  grupo: string
+  familia: string
+  macro: string
+  unidade: string
+  saldo: number
+  custo_unit: number
+  valor_saldo: number
+  pct_do_total: number
+  pct_acumulado: number | null
+  abc: ClasseABC
+  status: Status
+  ultima_entrada: string | null
+  ultimo_consumo: string | null
+}
+
+export interface CurvaABC {
+  hoje: string
+  valor_total: number
+  n_itens: number
+  resumo: Record<'A' | 'B' | 'C', { n_itens: number; valor: number; pct_valor: number }>
+  itens: LinhaABC[]
 }
 
 export interface Obra { prevision_id: string; nome: string }
@@ -219,6 +248,8 @@ export const api = {
     req<Conta>('/api/usuarios', { method: 'POST', body: JSON.stringify(u) }),
   material: (obra: string, janela = 90) =>
     req<Material>(`/api/estoque/material?obra=${obra}&janela_dias=${janela}`),
+  curvaAbc: (obra: string, janela = 90) =>
+    req<CurvaABC>(`/api/estoque/curva-abc?obra=${obra}&janela_dias=${janela}`),
   financeiro: (obra: string, meses = 12) =>
     req<Financeiro>(`/api/estoque/financeiro?obra=${obra}&meses=${meses}`),
   consumo: (obra: string, meses = 12) =>
