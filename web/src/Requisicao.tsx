@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, num, familiaCurta, type Item, type EscritaItem } from './api'
+import { api, num, familiaCurta, type Item, type Embalagem } from './api'
+import { AddInsumoModal, linhaParaEscrita, resumoLinha, type CestaLinha } from './AddInsumo'
 import Loader from './Loader'
 
-type Cesta = Record<string, { item: Item; qtd: number }>
-
+interface FichaItem { descricao: string; qtd: number; unidade: string; resource_id: string; variante?: string; embalagem?: string }
 interface Ficha {
   numero: string; terceiro: string; solicitante: string; obraNome: string
-  data: string; operador: string
-  itens: { descricao: string; qtd: number; unidade: string; resource_id: string }[]
+  data: string; operador: string; itens: FichaItem[]
 }
 
 export default function Requisicao({ obra, obraNome, operador }: { obra: string; obraNome: string; operador: string }) {
@@ -15,7 +14,9 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
   const [macros, setMacros] = useState<string[]>([])
   const [macro, setMacro] = useState('')
   const [q, setQ] = useState('')
-  const [cesta, setCesta] = useState<Cesta>({})
+  const [cesta, setCesta] = useState<CestaLinha[]>([])
+  const [embMap, setEmbMap] = useState<Record<string, Embalagem[]>>({})
+  const [sel, setSel] = useState<Item | null>(null)
   const [terceiro, setTerceiro] = useState('')
   const [solicitante, setSolicitante] = useState('')
   const [recentes, setRecentes] = useState<string[]>([])
@@ -25,7 +26,12 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
   const [ficha, setFicha] = useState<Ficha | null>(null)
 
   const carregar = () => api.catalogo(obra).then(r => { setItens(r.itens); setMacros(r.macro_ordem) })
-  useEffect(() => { setCesta({}); setFicha(null); carregar() }, [obra])
+  const carregarEmb = () => api.embalagens().then(r => {
+    const m: Record<string, Embalagem[]> = {}
+    r.embalagens.forEach(e => { (m[e.resource_id] ||= []).push(e) })
+    setEmbMap(m)
+  }).catch(() => {})
+  useEffect(() => { setCesta([]); setFicha(null); carregar(); carregarEmb() }, [obra])
   useEffect(() => {
     api.movimentos(obra).then(r => {
       const ts = Array.from(new Set(r.itens.map(m => (m as { terceiro?: string }).terceiro).filter(Boolean))) as string[]
@@ -39,26 +45,26 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
       (!ql || i.descricao.toLowerCase().includes(ql) || i.resource_id === ql)).slice(0, 200)
   }, [itens, macro, q])
 
-  const setQtd = (i: Item, qtd: number) => setCesta(c => {
-    const n = { ...c }; if (!qtd) delete n[i.resource_id]; else n[i.resource_id] = { item: i, qtd }; return n
-  })
-  const linhas = Object.values(cesta)
-  const excede = linhas.some(l => l.qtd > l.item.saldo)
+  const addLinha = (l: CestaLinha) => setCesta(c => [...c.filter(x => x.key !== l.key), l])
+  const removeLinha = (key: string) => setCesta(c => c.filter(x => x.key !== key))
+  const naCesta = (rid: string) => cesta.filter(l => l.item.resource_id === rid).length
+  const excede = cesta.some(l => l.baseQtd > l.saldoVariante + 1e-6)
 
   const gravar = async () => {
-    const payload: EscritaItem[] = linhas.map(l => ({
-      resource_id: l.item.resource_id, quantidade: l.qtd, unidade: l.item.unidade, descricao: l.item.descricao,
-    }))
     setGravando(true)
     try {
-      const r = await api.baixa(obra, payload, { terceiro: terceiro.trim(), solicitante: solicitante.trim() || undefined })
+      const r = await api.baixa(obra, cesta.map(linhaParaEscrita), { terceiro: terceiro.trim(), solicitante: solicitante.trim() || undefined })
       setFicha({
         numero: `REQ-${(r.auditoria_ids[0] ?? Date.now()).toString().padStart(5, '0')}`,
         terceiro: terceiro.trim(), solicitante: solicitante.trim(), obraNome,
         data: new Date().toLocaleString('pt-BR'), operador,
-        itens: linhas.map(l => ({ descricao: l.item.descricao, qtd: l.qtd, unidade: l.item.unidade, resource_id: l.item.resource_id })),
+        itens: cesta.map(l => ({
+          descricao: l.item.descricao, qtd: l.baseQtd, unidade: l.unidade, resource_id: l.item.resource_id,
+          variante: l.varianteLabel || undefined,
+          embalagem: l.embalagemNome ? `${num(l.qtdEmb, 2)} ${l.embalagemNome} × ${num(l.fator, 2)}` : undefined,
+        })),
       })
-      setCesta({}); setConfirmar(false); carregar()
+      setCesta([]); setConfirmar(false); carregar()
     } catch (e) { setMsg('✗ ' + (e instanceof Error ? e.message : String(e))); setConfirmar(false) }
     finally { setGravando(false) }
   }
@@ -91,19 +97,15 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
 
       <div className="tbl-wrap">
         <table className="tbl operar-tbl">
-          <thead><tr><th>Insumo</th><th className="r">Saldo</th><th className="r">Qtd a retirar</th></tr></thead>
+          <thead><tr><th>Insumo</th><th className="r">Saldo</th><th className="r"></th></tr></thead>
           <tbody>
             {filtrados.map(i => {
-              const q2 = cesta[i.resource_id]?.qtd
-              const over = q2 !== undefined && q2 > i.saldo
+              const n = naCesta(i.resource_id)
               return (
-                <tr key={i.resource_id} className={cesta[i.resource_id] ? 'sel' : ''}>
+                <tr key={i.resource_id} className={n ? 'sel' : ''}>
                   <td><div className="desc">{i.descricao}</div><div className="meta">{i.macro}{i.familia ? ` · ${familiaCurta(i.familia)}` : ''} · #{i.resource_id}</div></td>
                   <td className="r">{num(i.saldo, 2)} <span className="u">{i.unidade}</span></td>
-                  <td className="r">
-                    <input type="number" min={0} step="any" className="qtd" style={over ? { borderColor: 'var(--ruptura)' } : undefined}
-                      value={q2 ?? ''} placeholder="0" onChange={e => setQtd(i, parseFloat(e.target.value) || 0)} />
-                  </td>
+                  <td className="r"><button className="mini" onClick={() => setSel(i)}>{n ? `+ (${n})` : '+ Adicionar'}</button></td>
                 </tr>
               )
             })}
@@ -114,9 +116,14 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
         </table>
       </div>
 
-      {linhas.length > 0 && (
+      {sel && (
+        <AddInsumoModal obra={obra} op="baixa" item={sel} embalagens={embMap[sel.resource_id] || []}
+          verbo="Retirar" onEmbSalva={carregarEmb} onAdd={addLinha} onClose={() => setSel(null)} />
+      )}
+
+      {cesta.length > 0 && (
         <div className="cesta-bar">
-          <div className="cesta-info">{linhas.length} item(ns) na requisição{excede && <span style={{ color: 'var(--ruptura)' }}> · qtd acima do saldo</span>}</div>
+          <div className="cesta-info">{cesta.length} item(ns) na requisição{excede && <span style={{ color: 'var(--ruptura)' }}> · qtd acima do saldo</span>}</div>
           <button className="cta" disabled={!terceiro.trim()} onClick={() => setConfirmar(true)}>
             {terceiro.trim() ? 'Gerar requisição' : 'Informe o terceiro'}</button>
         </div>
@@ -128,7 +135,12 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
             <h3>Confirmar retirada</h3>
             <p className="warn-txt">Retirada para <b style={{ color: 'var(--text)' }}>{terceiro}</b>. Dá baixa no estoque (Sienge) e gera a ficha.</p>
             <ul className="conf-list">
-              {linhas.map(l => <li key={l.item.resource_id}><span>{l.item.descricao}</span><b>{num(l.qtd, 2)} {l.item.unidade}</b></li>)}
+              {cesta.map(l => (
+                <li key={l.key}>
+                  <span>{l.item.descricao}{resumoLinha(l) && <em className="cesta-var"> · {resumoLinha(l)}</em>}</span>
+                  <b>{num(l.baseQtd, 2)} {l.unidade} <button className="x" onClick={() => removeLinha(l.key)}>✕</button></b>
+                </li>
+              ))}
             </ul>
             <div className="modal-acts">
               <button className="ghost" onClick={() => setConfirmar(false)} disabled={gravando}>Cancelar</button>
@@ -168,7 +180,11 @@ function FichaView({ ficha, onNova }: { ficha: Ficha; onNova: () => void }) {
             <thead><tr><th>#</th><th>Material</th><th>Código</th><th className="r">Qtd</th><th>Un.</th></tr></thead>
             <tbody>
               {ficha.itens.map((i, n) => (
-                <tr key={i.resource_id}><td>{n + 1}</td><td>{i.descricao}</td><td>{i.resource_id}</td><td className="r">{num(i.qtd, 2)}</td><td>{i.unidade}</td></tr>
+                <tr key={i.resource_id + n}>
+                  <td>{n + 1}</td>
+                  <td>{i.descricao}{(i.variante || i.embalagem) && <div className="ficha-var">{[i.variante, i.embalagem].filter(Boolean).join(' · ')}</div>}</td>
+                  <td>{i.resource_id}</td><td className="r">{num(i.qtd, 2)}</td><td>{i.unidade}</td>
+                </tr>
               ))}
             </tbody>
           </table>
