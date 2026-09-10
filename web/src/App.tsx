@@ -542,10 +542,10 @@ function AddInsumoModal({ obra, op, item, embalagens, onEmbSalva, onAdd, onClose
   const [erro, setErro] = useState('')
 
   useEffect(() => {
-    api.insumoVariantes(obra, item.resource_id)
+    api.insumoVariantes(obra, item.resource_id, op === 'entrada')
       .then(r => setVars(r.variantes))
       .catch(() => setVars([]))
-  }, [obra, item.resource_id])
+  }, [obra, item.resource_id, op])
 
   const emb = embalagens.find(e => e.id === embId)
   useEffect(() => { setFator(emb ? emb.fator : 1) }, [embId]) // eslint-disable-line
@@ -587,7 +587,7 @@ function AddInsumoModal({ obra, op, item, embalagens, onEmbSalva, onAdd, onClose
 
         {vars === null ? <div className="add-load">carregando variações…</div> : temVar && (
           <div className="add-blk">
-            <label>Variação {op === 'baixa' ? '(saldo por cor)' : ''}</label>
+            <label>Variação / especificação {op === 'baixa' ? '(saldo por variação)' : ''}</label>
             <div className="var-chips">
               {vars.map((v, idx) => (
                 <button key={idx} className={idx === vi ? 'on' : ''} onClick={() => setVi(idx)}>
@@ -601,7 +601,7 @@ function AddInsumoModal({ obra, op, item, embalagens, onEmbSalva, onAdd, onClose
         )}
 
         <div className="add-blk">
-          <label>Unidade / embalagem</label>
+          <label>Unidade de movimento {op === 'entrada' ? '(como o produto entra)' : '(como sai)'}</label>
           <div className="var-chips">
             <button className={!embId ? 'on' : ''} onClick={() => setEmbId('')}>{unidade} <em>base</em></button>
             {embalagens.map(e => (
@@ -619,8 +619,8 @@ function AddInsumoModal({ obra, op, item, embalagens, onEmbSalva, onAdd, onClose
           )}
           {novaEmb && (
             <div className="add-nova-form">
-              <input placeholder="nome (ex.: Rolo)" value={nomeEmb} onChange={e => setNomeEmb(e.target.value)} />
-              <input type="number" min={0} step="any" placeholder={`${unidade} por embalagem`} value={fatorEmb} onChange={e => setFatorEmb(e.target.value)} />
+              <input placeholder="nome (ex.: Rolo, Balde, Caixa)" value={nomeEmb} onChange={e => setNomeEmb(e.target.value)} />
+              <input type="number" min={0} step="any" placeholder={`quantos ${unidade} tem`} value={fatorEmb} onChange={e => setFatorEmb(e.target.value)} />
               <button className="mini forte" onClick={salvarNovaEmb}>Salvar</button>
             </div>
           )}

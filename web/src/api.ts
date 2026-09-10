@@ -270,8 +270,8 @@ export const api = {
     req<{ ok: boolean; rodando?: boolean; atual?: number; n?: number }>(`/api/estoque/grupos/atualizar`, { method: 'POST' }),
   catalogo: (obra: string) =>
     req<{ itens: Item[]; macro_ordem: string[] }>(`/api/estoque/catalogo?obra=${obra}`),
-  insumoVariantes: (obra: string, resourceId: string) =>
-    req<{ variantes: Variante[] }>(`/api/estoque/insumo-variantes?obra=${obra}&resource_id=${resourceId}`),
+  insumoVariantes: (obra: string, resourceId: string, todas = false) =>
+    req<{ variantes: Variante[] }>(`/api/estoque/insumo-variantes?obra=${obra}&resource_id=${resourceId}&todas=${todas}`),
   embalagens: () => req<{ embalagens: Embalagem[] }>(`/api/estoque/embalagens`),
   salvarEmbalagem: (e: { resource_id: string; nome: string; fator: number; unidade?: string }) =>
     req<Embalagem>(`/api/estoque/embalagens`, { method: 'POST', body: JSON.stringify(e) }),

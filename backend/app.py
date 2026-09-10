@@ -415,17 +415,50 @@ def _estoque_inv(obra: str, force: bool = False) -> list[dict]:
 
 @app.get("/api/estoque/insumo-variantes")
 def insumo_variantes(obra: str = Query(...), resource_id: str = Query(...),
-                     usuario: str = Depends(usuario_logado)):
-    """Variações (cor/marca) de um insumo COM saldo na obra — alimenta o seletor
-    de cor da baixa. Se não tem variação, volta uma linha única (detail/trademark nulos)."""
+                     todas: bool = False, usuario: str = Depends(usuario_logado)):
+    """Variações (cor/bitola/spec/marca) de um insumo. Na BAIXA (todas=false):
+    só as que têm saldo na obra. Na ENTRADA (todas=true): todas as cadastradas
+    (a variação pode ainda não ter entrado), com o saldo atual anexado."""
     obra_ou_erro(obra)
-    rows = [r for r in _estoque_inv(obra)
-            if str(r.get("resourceId")) == str(resource_id) and (r.get("quantity") or 0) != 0]
-    vs = [{
-        "detail_id": r.get("detailId"), "detail_desc": (r.get("detailDescription") or "").strip(),
-        "trademark_id": r.get("trademarkId"), "trademark_desc": (r.get("trademarkDescription") or "").strip(),
-        "saldo": r.get("quantity"), "unidade": r.get("unitOfMeasure"),
-    } for r in rows]
+    saldo = {}  # (detailId, trademarkId) -> (quantity, unit)
+    unid_base = None
+    for r in _estoque_inv(obra):
+        if str(r.get("resourceId")) != str(resource_id):
+            continue
+        unid_base = unid_base or r.get("unitOfMeasure")
+        saldo[(r.get("detailId"), r.get("trademarkId"))] = (r.get("quantity") or 0, r.get("unitOfMeasure"))
+
+    if not todas:
+        vs = [{
+            "detail_id": d, "detail_desc": "", "trademark_id": t, "trademark_desc": "",
+            "saldo": q, "unidade": u,
+        } for (d, t), (q, u) in saldo.items() if q]
+        # enriquece descrição das variações a partir do inventário
+        for v in vs:
+            for r in _estoque_inv(obra):
+                if str(r.get("resourceId")) == str(resource_id) and r.get("detailId") == v["detail_id"] and r.get("trademarkId") == v["trademark_id"]:
+                    v["detail_desc"] = (r.get("detailDescription") or "").strip()
+                    v["trademark_desc"] = (r.get("trademarkDescription") or "").strip()
+                    break
+        return {"variantes": vs}
+
+    # entrada: todas as variações cadastradas
+    if _modo_demo():
+        return {"variantes": []}
+    info = sienge.resource_variacoes(resource_id)
+    u0 = info.get("unit") or unid_base or ""
+    dets, tms = info.get("details") or [], info.get("trademarks") or []
+    vs = []
+    if dets:
+        for d in dets:
+            q = saldo.get((d["id"], None), (0, u0))[0]
+            vs.append({"detail_id": d["id"], "detail_desc": (d.get("description") or "").strip(),
+                       "trademark_id": None, "trademark_desc": "", "saldo": q, "unidade": u0})
+    elif tms:
+        for t in tms:
+            q = saldo.get((None, t["id"]), (0, u0))[0]
+            vs.append({"detail_id": None, "detail_desc": "", "trademark_id": t["id"],
+                       "trademark_desc": (t.get("description") or "").strip(), "saldo": q, "unidade": u0})
     return {"variantes": vs}
 
 

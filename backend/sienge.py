@@ -261,6 +261,22 @@ def buscar_apropriacao(cost_center_id: int, resource_id,
     return sorted(res, key=lambda a: -(a.get("quantity") or 0))
 
 
+_COST_DB = 3  # tabela de custos de referência (onde ficam detalhes/marcas dos insumos)
+
+
+def resource_variacoes(resource_id) -> dict:
+    """Detalhes (cor/bitola/spec) e marcas CADASTRADOS de um insumo — usado na
+    ENTRADA, onde a variação pode ainda não ter saldo. Vazio se 404."""
+    r = _call("GET", f"/cost-databases/{_COST_DB}/resources/{resource_id}")
+    if r.status_code == 404:
+        return {"details": [], "trademarks": [], "unit": None}
+    r.raise_for_status()
+    j = r.json()
+    ativos = lambda xs: [x for x in (xs or []) if (x.get("status") or "ACTIVE") == "ACTIVE"]
+    return {"details": ativos(j.get("details")), "trademarks": ativos(j.get("trademarks")),
+            "unit": j.get("unitOfMeasure")}
+
+
 def estoque_inventario(cost_center_id: int) -> list[dict]:
     """GET /stock-inventories/{cc}/items — saldo atual por (resourceId, detailId,
     trademarkId). Base do seletor de cor/variação na baixa/entrada."""
