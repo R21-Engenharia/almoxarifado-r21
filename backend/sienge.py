@@ -240,17 +240,43 @@ def buscar_movimento(movement_id: int) -> dict | None:
         return r.json()
 
 
-def buscar_apropriacao(cost_center_id: int, resource_id) -> list[dict]:
+def buscar_apropriacao(cost_center_id: int, resource_id,
+                       detail_id=None, trademark_id=None) -> list[dict]:
     """GET /stock-inventories/{cc}/items/{rid}/building-appropriation.
     Retorna os itens de orçamento (WBS) aos quais o insumo pode ser apropriado —
     necessário para movimentos de entrada/saída avulsa (o Sienge exige 100%).
-    Ordena por maior quantidade orçada (candidato mais provável primeiro)."""
-    r = _call("GET", f"/stock-inventories/{cost_center_id}/items/{resource_id}/building-appropriation")
+    A apropriação é indexada por detalhe/marca: sem passar detailId/trademarkId,
+    itens com variação voltam vazios. Ordena pelo maior saldo (candidato provável)."""
+    params = {}
+    if detail_id is not None:
+        params["detailId"] = detail_id
+    if trademark_id is not None:
+        params["trademarkId"] = trademark_id
+    r = _call("GET", f"/stock-inventories/{cost_center_id}/items/{resource_id}/building-appropriation",
+              params=params or None)
     if r.status_code == 404:
         return []
     r.raise_for_status()
     res = r.json().get("results", []) or []
     return sorted(res, key=lambda a: -(a.get("quantity") or 0))
+
+
+def estoque_inventario(cost_center_id: int) -> list[dict]:
+    """GET /stock-inventories/{cc}/items — saldo atual por (resourceId, detailId,
+    trademarkId). Base do seletor de cor/variação na baixa/entrada."""
+    itens, off = [], 0
+    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
+        while True:
+            r = c.get(f"{_base_v1()}/stock-inventories/{cost_center_id}/items",
+                      params={"limit": 200, "offset": off})
+            r.raise_for_status()
+            js = r.json()
+            res = js.get("results", []) or []
+            itens += res
+            off += 200
+            if off >= (js.get("resultSetMetadata", {}).get("count", 0)) or not res:
+                break
+    return itens
 
 
 def criar_movimento(cost_center_id: int, movement_type_id: int, document_id: str,

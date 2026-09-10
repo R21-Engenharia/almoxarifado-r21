@@ -131,6 +131,37 @@ def upsert_usuario(dados: dict) -> dict:
         return j[0] if isinstance(j, list) and j else (j or dados)
 
 
+# ---------------------------------------------------------------- embalagens
+_EMB = "/rest/v1/embalagens"
+
+
+def listar_embalagens() -> list[dict]:
+    """Todas as embalagens cadastradas (Rolo=100m, Caixa=50un, ...), por insumo."""
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.get(f"{_url()}{_EMB}", params={"select": "*", "order": "resource_id.asc,nome.asc"},
+                    headers=_headers_admin())
+        r.raise_for_status()
+        return r.json()
+
+
+def upsert_embalagem(dados: dict) -> dict:
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.post(f"{_url()}{_EMB}",
+                     headers={**_headers_admin(), "Prefer": "return=representation"},
+                     json=dados)
+        if r.status_code >= 400:
+            raise AuthError((r.text or "")[:200], r.status_code)
+        j = r.json()
+        return j[0] if isinstance(j, list) and j else (j or dados)
+
+
+def deletar_embalagem(emb_id: str):
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.delete(f"{_url()}{_EMB}", params={"id": f"eq.{emb_id}"}, headers=_headers_admin())
+        if r.status_code >= 400:
+            raise AuthError((r.text or "")[:200], r.status_code)
+
+
 # ---------------------------------------------------------------- auditoria
 
 TBL = "/rest/v1/estoque_movimentos"

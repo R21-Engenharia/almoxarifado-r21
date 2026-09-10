@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from 're
 import {
   api, brl, num, familiaCurta, STATUS_LABEL,
   type Item, type Material, type Movimento, type Obra, type Status, type EscritaItem,
+  type Variante, type Embalagem,
 } from './api'
 import { supabase, authAtiva } from './supabase'
 import { Avatar, PerfilModal } from './PerfilCard'
@@ -391,7 +392,12 @@ function ItemTable({ itens, cols }: { itens: Item[]; cols: string[] }) {
 }
 
 /* ----------------------------------------------------------- Operar */
-type Cesta = Record<string, { item: Item; qtd: number }>
+type CestaLinha = {
+  key: string; item: Item
+  detailId: number | null; trademarkId: number | null; varianteLabel: string
+  embalagemNome: string; fator: number; qtdEmb: number; baseQtd: number
+  unidade: string; saldoVariante: number
+}
 
 function Operar({ obra }: { obra: string }) {
   const [itens, setItens] = useState<Item[]>([])
@@ -399,13 +405,20 @@ function Operar({ obra }: { obra: string }) {
   const [macro, setMacro] = useState<string>('')
   const [q, setQ] = useState('')
   const [op, setOp] = useState<'baixa' | 'entrada'>('baixa')
-  const [cesta, setCesta] = useState<Cesta>({})
+  const [cesta, setCesta] = useState<CestaLinha[]>([])
+  const [embMap, setEmbMap] = useState<Record<string, Embalagem[]>>({})
+  const [sel, setSel] = useState<Item | null>(null)   // insumo sendo adicionado
   const [msg, setMsg] = useState('')
   const [confirmar, setConfirmar] = useState(false)
   const [gravando, setGravando] = useState(false)
 
   const carregar = () => api.catalogo(obra).then(r => { setItens(r.itens); setMacros(r.macro_ordem) })
-  useEffect(() => { setCesta({}); carregar() }, [obra])
+  const carregarEmb = () => api.embalagens().then(r => {
+    const m: Record<string, Embalagem[]> = {}
+    r.embalagens.forEach(e => { (m[e.resource_id] ||= []).push(e) })
+    setEmbMap(m)
+  }).catch(() => { /* embalagens é opcional */ })
+  useEffect(() => { setCesta([]); carregar(); carregarEmb() }, [obra])
 
   const filtrados = useMemo(() => {
     const ql = q.toLowerCase().trim()
@@ -415,25 +428,25 @@ function Operar({ obra }: { obra: string }) {
       .slice(0, 200)
   }, [itens, macro, q])
 
-  const setQtd = (i: Item, qtd: number) => setCesta(c => {
-    const n = { ...c }
-    if (!qtd) delete n[i.resource_id]; else n[i.resource_id] = { item: i, qtd }
-    return n
-  })
+  const addLinha = (l: CestaLinha) => setCesta(c => [...c.filter(x => x.key !== l.key), l])
+  const removeLinha = (key: string) => setCesta(c => c.filter(x => x.key !== key))
 
-  const linhas = Object.values(cesta)
   const gravar = async () => {
-    const payload: EscritaItem[] = linhas.map(l => ({
-      resource_id: l.item.resource_id, quantidade: l.qtd, unidade: l.item.unidade, descricao: l.item.descricao,
+    const payload: EscritaItem[] = cesta.map(l => ({
+      resource_id: l.item.resource_id, quantidade: l.baseQtd, unidade: l.unidade, descricao: l.item.descricao,
+      detail_id: l.detailId, trademark_id: l.trademarkId, variante: l.varianteLabel || undefined,
+      embalagem: l.embalagemNome || undefined, fator_embalagem: l.embalagemNome ? l.fator : undefined,
     }))
     setGravando(true)
     try {
       const r = op === 'baixa' ? await api.baixa(obra, payload) : await api.entrada(obra, payload)
       setMsg(`✓ ${op === 'baixa' ? 'Baixa' : 'Entrada'} registrada (${r.auditoria_ids.length} item(ns)).`)
-      setCesta({}); setConfirmar(false); carregar()
+      setCesta([]); setConfirmar(false); carregar()
     } catch (e) { setMsg('✗ ' + (e instanceof Error ? e.message : String(e))) }
     finally { setGravando(false) }
   }
+
+  const naCesta = (rid: string) => cesta.filter(l => l.item.resource_id === rid).length
 
   return (
     <div className="operar">
@@ -454,30 +467,37 @@ function Operar({ obra }: { obra: string }) {
 
       <div className="tbl-wrap">
         <table className="tbl operar-tbl">
-          <thead><tr><th>Insumo</th><th className="r">Saldo</th><th className="r">Qtd {op === 'baixa' ? 'a baixar' : 'a entrar'}</th></tr></thead>
+          <thead><tr><th>Insumo</th><th className="r">Saldo</th><th className="r"></th></tr></thead>
           <tbody>
-            {filtrados.map(i => (
-              <tr key={i.resource_id} className={cesta[i.resource_id] ? 'sel' : ''}>
-                <td>
-                  <div className="desc">{i.descricao}</div>
-                  <div className="meta"><StatusPill s={i.status} /> {i.macro}{i.familia ? ` · ${familiaCurta(i.familia)}` : ''} · #{i.resource_id}</div>
-                </td>
-                <td className="r">{num(i.saldo, 2)} <span className="u">{i.unidade}</span></td>
-                <td className="r">
-                  <input type="number" min={0} step="any" className="qtd"
-                    value={cesta[i.resource_id]?.qtd ?? ''} placeholder="0"
-                    onChange={e => setQtd(i, parseFloat(e.target.value) || 0)} />
-                </td>
-              </tr>
-            ))}
+            {filtrados.map(i => {
+              const n = naCesta(i.resource_id)
+              return (
+                <tr key={i.resource_id} className={n ? 'sel' : ''}>
+                  <td>
+                    <div className="desc">{i.descricao}</div>
+                    <div className="meta"><StatusPill s={i.status} /> {i.macro}{i.familia ? ` · ${familiaCurta(i.familia)}` : ''} · #{i.resource_id}</div>
+                  </td>
+                  <td className="r">{num(i.saldo, 2)} <span className="u">{i.unidade}</span></td>
+                  <td className="r">
+                    <button className="mini" onClick={() => setSel(i)}>{n ? `+ (${n})` : '+ Adicionar'}</button>
+                  </td>
+                </tr>
+              )
+            })}
             {filtrados.length === 0 && <tr><td colSpan={3}><Empty>Nenhum insumo com esse filtro.</Empty></td></tr>}
           </tbody>
         </table>
       </div>
 
-      {linhas.length > 0 && (
+      {sel && (
+        <AddInsumoModal obra={obra} op={op} item={sel} embalagens={embMap[sel.resource_id] || []}
+          onEmbSalva={carregarEmb}
+          onAdd={addLinha} onClose={() => setSel(null)} />
+      )}
+
+      {cesta.length > 0 && (
         <div className="cesta-bar">
-          <div className="cesta-info">{linhas.length} item(ns) · {op === 'baixa' ? 'baixa' : 'entrada'}</div>
+          <div className="cesta-info">{cesta.length} linha(s) · {op === 'baixa' ? 'baixa' : 'entrada'}</div>
           <button className="cta" onClick={() => setConfirmar(true)}>Revisar e gravar</button>
         </div>
       )}
@@ -488,7 +508,13 @@ function Operar({ obra }: { obra: string }) {
             <h3>Confirmar {op === 'baixa' ? 'baixa (consumo)' : 'entrada'}</h3>
             <p className="warn-txt">Isto grava no Sienge e é registrado na auditoria. Estorno depois é possível, mas gera um novo movimento.</p>
             <ul className="conf-list">
-              {linhas.map(l => <li key={l.item.resource_id}><span>{l.item.descricao}</span><b>{num(l.qtd, 2)} {l.item.unidade}</b></li>)}
+              {cesta.map(l => (
+                <li key={l.key}>
+                  <span>{l.item.descricao}{l.varianteLabel && <em className="cesta-var"> · {l.varianteLabel}</em>}
+                    {l.embalagemNome && <em className="cesta-emb"> · {num(l.qtdEmb, 2)} {l.embalagemNome} × {num(l.fator, 2)}</em>}</span>
+                  <b>{num(l.baseQtd, 2)} {l.unidade} <button className="x" onClick={() => removeLinha(l.key)}>✕</button></b>
+                </li>
+              ))}
             </ul>
             <div className="modal-acts">
               <button className="ghost" onClick={() => setConfirmar(false)} disabled={gravando}>Cancelar</button>
@@ -497,6 +523,125 @@ function Operar({ obra }: { obra: string }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function AddInsumoModal({ obra, op, item, embalagens, onEmbSalva, onAdd, onClose }: {
+  obra: string; op: 'baixa' | 'entrada'; item: Item; embalagens: Embalagem[]
+  onEmbSalva: () => void
+  onAdd: (l: CestaLinha) => void; onClose: () => void
+}) {
+  const [vars, setVars] = useState<Variante[] | null>(null)
+  const [vi, setVi] = useState(0)                       // índice da variante escolhida
+  const [embId, setEmbId] = useState<string>('')        // '' = unidade-base
+  const [fator, setFator] = useState(1)
+  const [qtd, setQtd] = useState('')
+  const [novaEmb, setNovaEmb] = useState(false)
+  const [nomeEmb, setNomeEmb] = useState(''); const [fatorEmb, setFatorEmb] = useState('')
+  const [erro, setErro] = useState('')
+
+  useEffect(() => {
+    api.insumoVariantes(obra, item.resource_id)
+      .then(r => setVars(r.variantes))
+      .catch(() => setVars([]))
+  }, [obra, item.resource_id])
+
+  const emb = embalagens.find(e => e.id === embId)
+  useEffect(() => { setFator(emb ? emb.fator : 1) }, [embId]) // eslint-disable-line
+  const variante = vars && vars.length ? vars[Math.min(vi, vars.length - 1)] : null
+  const unidade = variante?.unidade || item.unidade
+  const temVar = !!vars && vars.some(v => v.detail_id != null || v.trademark_id != null)
+  const qNum = parseFloat(qtd) || 0
+  const baseQtd = qNum * (fator || 1)
+  const saldoVar = variante?.saldo ?? item.saldo
+  const excede = op === 'baixa' && baseQtd > saldoVar + 1e-6
+
+  const salvarNovaEmb = async () => {
+    const f = parseFloat(fatorEmb) || 0
+    if (!nomeEmb.trim() || f <= 0) { setErro('Informe nome e fator (> 0).'); return }
+    try {
+      const e = await api.salvarEmbalagem({ resource_id: item.resource_id, nome: nomeEmb.trim(), fator: f, unidade })
+      onEmbSalva(); setNovaEmb(false); setNomeEmb(''); setFatorEmb(''); setEmbId(e.id)
+    } catch (ex) { setErro(ex instanceof Error ? ex.message : String(ex)) }
+  }
+
+  const adicionar = () => {
+    if (baseQtd <= 0) { setErro('Informe a quantidade.'); return }
+    if (op === 'baixa' && !variante && temVar) { setErro('Escolha a variação.'); return }
+    const label = variante ? [variante.detail_desc, variante.trademark_desc].filter(Boolean).join(' / ') : ''
+    onAdd({
+      key: `${item.resource_id}|${variante?.detail_id ?? ''}|${variante?.trademark_id ?? ''}|${emb?.nome ?? ''}`,
+      item, detailId: variante?.detail_id ?? null, trademarkId: variante?.trademark_id ?? null,
+      varianteLabel: label, embalagemNome: emb?.nome ?? '', fator: fator || 1,
+      qtdEmb: qNum, baseQtd, unidade, saldoVariante: saldoVar,
+    })
+    onClose()
+  }
+
+  return (
+    <div className="modal" onClick={onClose}>
+      <div className="modal-card add-card" onClick={e => e.stopPropagation()}>
+        <h3>{op === 'baixa' ? 'Baixar' : 'Dar entrada em'}: {item.descricao}</h3>
+        <div className="add-sub">#{item.resource_id} · saldo total {num(item.saldo, 2)} {item.unidade}</div>
+
+        {vars === null ? <div className="add-load">carregando variações…</div> : temVar && (
+          <div className="add-blk">
+            <label>Variação {op === 'baixa' ? '(saldo por cor)' : ''}</label>
+            <div className="var-chips">
+              {vars.map((v, idx) => (
+                <button key={idx} className={idx === vi ? 'on' : ''} onClick={() => setVi(idx)}>
+                  {[v.detail_desc, v.trademark_desc].filter(Boolean).join(' / ') || '—'}
+                  <em>{num(v.saldo, 0)} {v.unidade}</em>
+                </button>
+              ))}
+              {vars.length === 0 && <span className="add-vazio">Sem saldo por variação nesta obra.</span>}
+            </div>
+          </div>
+        )}
+
+        <div className="add-blk">
+          <label>Unidade / embalagem</label>
+          <div className="var-chips">
+            <button className={!embId ? 'on' : ''} onClick={() => setEmbId('')}>{unidade} <em>base</em></button>
+            {embalagens.map(e => (
+              <button key={e.id} className={embId === e.id ? 'on' : ''} onClick={() => setEmbId(e.id)}>
+                {e.nome} <em>{num(e.fator, 0)} {e.unidade || unidade}</em>
+              </button>
+            ))}
+            <button className="add-nova" onClick={() => setNovaEmb(v => !v)}>+ embalagem</button>
+          </div>
+          {embId && (
+            <div className="add-fator">
+              1 {emb?.nome} = <input type="number" min={0} step="any" value={fator}
+                onChange={e => setFator(parseFloat(e.target.value) || 0)} /> {unidade} <span className="add-hint">(ajuste se este lote for diferente)</span>
+            </div>
+          )}
+          {novaEmb && (
+            <div className="add-nova-form">
+              <input placeholder="nome (ex.: Rolo)" value={nomeEmb} onChange={e => setNomeEmb(e.target.value)} />
+              <input type="number" min={0} step="any" placeholder={`${unidade} por embalagem`} value={fatorEmb} onChange={e => setFatorEmb(e.target.value)} />
+              <button className="mini forte" onClick={salvarNovaEmb}>Salvar</button>
+            </div>
+          )}
+        </div>
+
+        <div className="add-blk">
+          <label>Quantidade {embId ? `(em ${emb?.nome})` : `(em ${unidade})`}</label>
+          <input type="number" min={0} step="any" className="qtd big" autoFocus placeholder="0"
+            value={qtd} onChange={e => setQtd(e.target.value)} />
+          <div className={`add-calc ${excede ? 'bad' : ''}`}>
+            = <b>{num(baseQtd, 2)} {unidade}</b>
+            {op === 'baixa' && <> · saldo {variante ? 'da variação' : ''}: {num(saldoVar, 2)} {unidade}{excede && ' · excede o saldo!'}</>}
+          </div>
+        </div>
+
+        {erro && <div className="msg bad">{erro}</div>}
+        <div className="modal-acts">
+          <button className="ghost" onClick={onClose}>Cancelar</button>
+          <button className="cta" onClick={adicionar} disabled={baseQtd <= 0}>Adicionar</button>
+        </div>
+      </div>
     </div>
   )
 }

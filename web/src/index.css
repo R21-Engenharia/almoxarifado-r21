@@ -524,6 +524,37 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .conf-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .modal-acts { display: flex; justify-content: flex-end; gap: 8px; }
 
+/* Operar — modal de adicionar (cor/embalagem) */
+.add-card { max-width: 520px; }
+.add-sub { font-size: 12.5px; color: var(--muted); margin: -2px 0 14px; font-family: var(--font-mono); }
+.add-load, .add-vazio { font-size: 12.5px; color: var(--muted); padding: 4px 0; }
+.add-blk { margin-bottom: 16px; }
+.add-blk > label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .05em; margin-bottom: 8px; }
+.var-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.var-chips button { display: inline-flex; align-items: center; gap: 7px; background: var(--panel2);
+  color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 7px 11px; font-size: 13px; }
+.var-chips button.on { border-color: var(--accent); background: #e2231a1a; color: #fff; }
+.var-chips button em { font-style: normal; font-size: 11px; color: var(--muted); }
+.var-chips button.on em { color: #f6b0ac; }
+.var-chips button.add-nova { border-style: dashed; color: var(--muted); }
+.add-fator { margin-top: 10px; font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.add-fator input { width: 90px; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; }
+.add-hint { font-size: 11px; color: var(--muted); }
+.add-nova-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.add-nova-form input { background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 9px; font-size: 13px; }
+.add-nova-form input:first-child { flex: 1; min-width: 120px; }
+.qtd.big { width: 140px; font-size: 18px; padding: 10px 12px; }
+.add-calc { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.add-calc b { color: var(--text); }
+.add-calc.bad, .add-calc.bad b { color: var(--ruptura); }
+.cesta-var { font-style: normal; color: var(--accent); }
+.cesta-emb { font-style: normal; color: var(--muted); }
+.conf-list .x { background: none; border: none; color: var(--muted); font-size: 12px; margin-left: 8px; padding: 0 2px; }
+.conf-list .x:hover { color: var(--ruptura); }
+
 /* historico */
 .op { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; }
 .op.baixa { background: #ef444422; color: var(--critico); }

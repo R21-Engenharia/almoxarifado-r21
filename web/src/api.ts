@@ -270,6 +270,13 @@ export const api = {
     req<{ ok: boolean; rodando?: boolean; atual?: number; n?: number }>(`/api/estoque/grupos/atualizar`, { method: 'POST' }),
   catalogo: (obra: string) =>
     req<{ itens: Item[]; macro_ordem: string[] }>(`/api/estoque/catalogo?obra=${obra}`),
+  insumoVariantes: (obra: string, resourceId: string) =>
+    req<{ variantes: Variante[] }>(`/api/estoque/insumo-variantes?obra=${obra}&resource_id=${resourceId}`),
+  embalagens: () => req<{ embalagens: Embalagem[] }>(`/api/estoque/embalagens`),
+  salvarEmbalagem: (e: { resource_id: string; nome: string; fator: number; unidade?: string }) =>
+    req<Embalagem>(`/api/estoque/embalagens`, { method: 'POST', body: JSON.stringify(e) }),
+  deletarEmbalagem: (id: string) =>
+    req<{ ok: boolean }>(`/api/estoque/embalagens/${id}`, { method: 'DELETE' }),
   insumos: (obra: string, q: string) =>
     req<{ itens: Item[] }>(`/api/estoque/insumos?obra=${obra}&q=${encodeURIComponent(q)}`),
   insumoOrcamento: (obra: string, resourceId: string) =>
@@ -294,7 +301,21 @@ export const api = {
     req<WriteResp>(`/api/estoque/estorno`, { method: 'POST', body: JSON.stringify({ auditoria_id }) }),
 }
 
-export interface EscritaItem { resource_id: string; quantidade: number; unidade?: string; descricao?: string }
+export interface EscritaItem {
+  resource_id: string; quantidade: number; unidade?: string; descricao?: string
+  detail_id?: number | null; trademark_id?: number | null
+  variante?: string; embalagem?: string; fator_embalagem?: number
+}
+
+export interface Variante {
+  detail_id: number | null; detail_desc: string
+  trademark_id: number | null; trademark_desc: string
+  saldo: number; unidade: string
+}
+
+export interface Embalagem {
+  id: string; resource_id: string; nome: string; fator: number; unidade?: string | null
+}
 export interface WriteResp { ok: boolean; modo?: string; auditoria_ids: number[] }
 
 export const STATUS_LABEL: Record<Status, string> = {

@@ -392,8 +392,77 @@ def _memo(obra: str, tag: str, fn):
 
 def _invalidar_obra(prevision_id: str):
     _ANALISE_CACHE.pop(prevision_id, None)
+    _ESTOQUE_INV_CACHE.pop(prevision_id, None)
     for k in [k for k in _ENGINE_CACHE if k[0] == prevision_id]:
         _ENGINE_CACHE.pop(k, None)
+
+
+# inventário oficial do Sienge (saldo por cor/marca) — cache diário por obra
+_ESTOQUE_INV_CACHE: dict = {}
+
+
+def _estoque_inv(obra: str, force: bool = False) -> list[dict]:
+    hoje = date.today().isoformat()
+    c = _ESTOQUE_INV_CACHE.get(obra)
+    if not force and c and c[0] == hoje:
+        return c[1]
+    if _modo_demo():
+        return []
+    rows = sienge.estoque_inventario(OBRAS[obra]["cost_center_id"])
+    _ESTOQUE_INV_CACHE[obra] = (hoje, rows)
+    return rows
+
+
+@app.get("/api/estoque/insumo-variantes")
+def insumo_variantes(obra: str = Query(...), resource_id: str = Query(...),
+                     usuario: str = Depends(usuario_logado)):
+    """Variações (cor/marca) de um insumo COM saldo na obra — alimenta o seletor
+    de cor da baixa. Se não tem variação, volta uma linha única (detail/trademark nulos)."""
+    obra_ou_erro(obra)
+    rows = [r for r in _estoque_inv(obra)
+            if str(r.get("resourceId")) == str(resource_id) and (r.get("quantity") or 0) != 0]
+    vs = [{
+        "detail_id": r.get("detailId"), "detail_desc": (r.get("detailDescription") or "").strip(),
+        "trademark_id": r.get("trademarkId"), "trademark_desc": (r.get("trademarkDescription") or "").strip(),
+        "saldo": r.get("quantity"), "unidade": r.get("unitOfMeasure"),
+    } for r in rows]
+    return {"variantes": vs}
+
+
+# ---------------------------------------------------------------- embalagens
+class EmbalagemIn(BaseModel):
+    resource_id: str
+    nome: str
+    fator: float
+    unidade: str | None = None
+
+
+@app.get("/api/estoque/embalagens")
+def embalagens_listar(usuario: str = Depends(usuario_logado)):
+    if not _auth_ativo():
+        return {"embalagens": []}
+    return {"embalagens": supa.listar_embalagens()}
+
+
+@app.post("/api/estoque/embalagens")
+def embalagens_salvar(corpo: EmbalagemIn, usuario: str = Depends(usuario_operador)):
+    if corpo.fator <= 0:
+        raise HTTPException(422, "O fator da embalagem precisa ser maior que zero.")
+    dados = corpo.model_dump()
+    dados["criado_por"] = usuario
+    try:
+        return supa.upsert_embalagem(dados)
+    except supa.AuthError as e:
+        raise HTTPException(e.status if getattr(e, "status", 0) else 422, e.msg)
+
+
+@app.delete("/api/estoque/embalagens/{emb_id}")
+def embalagens_deletar(emb_id: str, usuario: str = Depends(usuario_operador)):
+    try:
+        supa.deletar_embalagem(emb_id)
+    except supa.AuthError as e:
+        raise HTTPException(e.status if getattr(e, "status", 0) else 422, e.msg)
+    return {"ok": True}
 
 
 @app.get("/api/estoque/financeiro")
@@ -806,9 +875,14 @@ def _macros_presentes(itens):
 
 class ItemEscrita(BaseModel):
     resource_id: str
-    quantidade: float
+    quantidade: float                 # sempre na unidade-base do Sienge (o front converte a embalagem)
     unidade: str | None = None
     descricao: str | None = None
+    detail_id: int | None = None      # variação (ex.: cor) — o saldo é indexado por isto
+    trademark_id: int | None = None   # marca
+    variante: str | None = None       # rótulo legível (cor/marca) p/ auditoria
+    embalagem: str | None = None      # ex.: "Rolo (100 m)" — só p/ registro
+    fator_embalagem: float | None = None
 
 
 class Escrita(BaseModel):
@@ -837,16 +911,23 @@ def _preco_unit(prevision_id: str, rid) -> float:
 
 
 def _gravar_avulso(cost_center_id, prevision_id, tipo_id, doc, hoje,
-                   rid, qtd, unid, notes):
+                   rid, qtd, unid, notes, detail_id=None, trademark_id=None):
     """Cria movimento de entrada/saída AVULSA (tipo 9/10). O Sienge exige:
     unitPrice (nas entradas) + buildingAppropriations somando 100% num item de
-    orçamento (WBS) NÃO bloqueado. Tenta cada item de orçamento até um aceitar."""
-    cands = sienge.buscar_apropriacao(cost_center_id, rid)
+    orçamento (WBS) NÃO bloqueado. Tenta cada item de orçamento até um aceitar.
+    A apropriação e o saldo são indexados por detalhe/marca — por isso repassamos
+    detailId/trademarkId tanto na busca quanto no item do movimento."""
+    cands = sienge.buscar_apropriacao(cost_center_id, rid,
+                                      detail_id=detail_id, trademark_id=trademark_id)
     if not cands:
         raise HTTPException(422, f"Insumo {rid} não tem apropriação de obra "
                             "configurada no Sienge — não dá para registrar entrada/estorno.")
     base_item = {"resourceId": int(rid) if str(rid).isdigit() else rid,
                  "quantity": qtd, "unitOfMeasure": unid}
+    if detail_id is not None:
+        base_item["detailId"] = detail_id
+    if trademark_id is not None:
+        base_item["trademarkId"] = trademark_id
     if tipo_id == 9:  # entrada exige preço unitário
         base_item["unitPrice"] = round(_preco_unit(prevision_id, rid) or 0.01, 4)
     # pula itens de orçamento já sabidamente bloqueados (acelera estornos seguintes)
@@ -882,12 +963,17 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
     if _modo_demo():
         resp = {"status": 201, "movement_id": f"DEMO-{operacao}", "resposta": {"demo": True}}
     elif operacao == "baixa":
-        # consumo (tipo 2): não exige preço nem apropriação — um movimento com N linhas
-        itens_sienge = [
-            {"resourceId": int(i.resource_id) if str(i.resource_id).isdigit() else i.resource_id,
-             "quantity": i.quantidade, "unitOfMeasure": i.unidade or ""}
-            for i in corpo.itens
-        ]
+        # consumo (tipo 2): não exige preço nem apropriação — um movimento com N linhas.
+        # o detailId/trademarkId é obrigatório p/ achar o saldo de itens com variação (cor).
+        itens_sienge = []
+        for i in corpo.itens:
+            it = {"resourceId": int(i.resource_id) if str(i.resource_id).isdigit() else i.resource_id,
+                  "quantity": i.quantidade, "unitOfMeasure": i.unidade or ""}
+            if i.detail_id is not None:
+                it["detailId"] = i.detail_id
+            if i.trademark_id is not None:
+                it["trademarkId"] = i.trademark_id
+            itens_sienge.append(it)
         try:
             resp = sienge.criar_movimento(o["cost_center_id"], tipo_id, doc, hoje,
                                           itens_sienge, notes=notes)
@@ -898,7 +984,8 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
         resp = {"status": 201, "movement_id": None, "resposta": {}}
         for i in corpo.itens:
             resp = _gravar_avulso(o["cost_center_id"], prevision_id, tipo_id, doc, hoje,
-                                  i.resource_id, i.quantidade, i.unidade or "", notes)
+                                  i.resource_id, i.quantidade, i.unidade or "", notes,
+                                  detail_id=i.detail_id, trademark_id=i.trademark_id)
     # anexa ao cache em vez de re-baixar todo o histórico (saldo atualiza na hora)
     _anexar_local(prevision_id, operacao, corpo, tipo_id)
 
