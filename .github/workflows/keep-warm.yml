@@ -6,10 +6,10 @@
 #   07:00 BRT = 10:00 UTC   |   18:00 BRT = 21:00 UTC   |   17:00 BRT = 20:00 UTC
 # Janela desejada: Seg-Qui 07h-18h, Sex 07h-17h (BRT).
 #
-# CONFIG: defina a variável de repositório BACKEND_URL (Settings > Secrets and
-#   variables > Actions > Variables) com a URL do backend no Render, ex.:
-#   https://almoxarifado-r21-api.onrender.com   (sem barra no final)
-#   Se não definir, usa esse valor como padrão.
+# CONFIG: o padrão já aponta para o backend real (https://almoxarifado-r21.onrender.com),
+#   confirmado via /api/health. Se um dia a URL do serviço no Render mudar, é só
+#   definir a variável de repositório BACKEND_URL (Settings > Secrets and variables
+#   > Actions > Variables) com a nova URL (sem barra no final) — ela tem prioridade.
 #
 # ATENÇÃO (limitações do GitHub Actions):
 #  - agendamentos podem ATRASAR alguns minutos (por isso pingamos a cada 10 min);
@@ -35,7 +35,7 @@ jobs:
     steps:
       - name: Ping /api/health
         run: |
-          URL="${{ vars.BACKEND_URL || 'https://almoxarifado-r21-api.onrender.com' }}"
+          URL="${{ vars.BACKEND_URL || 'https://almoxarifado-r21.onrender.com' }}"
           echo "Pingando $URL/api/health"
           # --retry cobre o caso de o serviço estar acordando (cold start ~50s)
           curl -fsS --max-time 90 --retry 3 --retry-delay 25 --retry-all-errors \
