@@ -237,16 +237,54 @@ function DetalheModal({ l, obraNome, podeEng, podePlan, onAcao, onFechar }: {
 
 function ItemCard({ c }: { c: ItemCtx }) {
   const { item, orc, subs, loading } = c
+  const uni = item.estoque_unidade ?? item.unidade ?? ''
+  const detalhe = [item.detail_desc, item.trademark_desc].filter(Boolean).join(' · ')
+  const temEstoque = item.estoque_atual != null
+  // solicitação de COMPRA: o estoque projetado é uma projeção de ENTRADA (atual + comprado),
+  // nunca uma baixa/consumo. Só mostramos o rateio por variação quando a solicitação não
+  // aponta um detalhe específico (aí o "atual" é o total do insumo).
+  const vars = (!detalhe && item.variantes) ? item.variantes : []
   return (
     <div className="ctx-item">
       <div className="ctx-item-head">
-        <div><b>{item.descricao}</b> <span className="meta">#{item.resource_id}</span></div>
+        <div>
+          <b>{item.descricao}</b> <span className="meta">#{item.resource_id}</span>
+          {detalhe && <div className="meta" style={{ marginTop: 3 }}>Detalhe: <b style={{ color: 'var(--text)' }}>{detalhe}</b></div>}
+        </div>
         <div className="ctx-v" style={{ fontSize: 15 }}>{num(item.quantidade, 2)} <span className="u">{item.unidade}</span></div>
       </div>
+
+      {temEstoque && (
+        <div className="proj" title="Solicitação de compra: estoque projetado = estoque atual + quantidade solicitada">
+          <div className="proj-cell">
+            <span className="proj-lbl">Estoque atual</span>
+            <span className="proj-val">{num(item.estoque_atual!, 2)}<i>{uni}</i></span>
+          </div>
+          <span className="proj-op">+</span>
+          <div className="proj-cell">
+            <span className="proj-lbl">Compra solicitada</span>
+            <span className="proj-val">{num(item.quantidade, 2)}<i>{uni}</i></span>
+          </div>
+          <span className="proj-op">=</span>
+          <div className="proj-cell proj-final">
+            <span className="proj-lbl">Estoque projetado</span>
+            <span className="proj-val">{num(item.estoque_projetado ?? item.estoque_atual! + item.quantidade, 2)}<i>{uni}</i></span>
+          </div>
+        </div>
+      )}
+      {vars.length > 0 && (
+        <div className="proj-vars">
+          <span className="proj-vars-lbl">Estoque atual por variação (o item não especifica um detalhe):</span>
+          {vars.map((v, i) => (
+            <span key={i} className="proj-var">{v.detail_desc || v.trademark_desc || 'sem detalhe'} <b>{num(v.saldo, 2)} {v.unidade}</b></span>
+          ))}
+        </div>
+      )}
+
       {loading && <div className="meta" style={{ padding: '4px 0' }}>carregando orçado e subetapa…</div>}
       {!loading && (
         <>
-          <div className="meta">Saldo em estoque: {orc ? `${num(orc.saldo, 2)} ${orc.unidade}` : '—'} · Orçado total: {orc ? `${num(orc.orcado_total, 2)}` : '—'}</div>
+          <div className="meta">Orçado total: {orc ? `${num(orc.orcado_total, 2)} ${orc.unidade}` : '—'}</div>
           <div className="ctx-subs">
             {subs.length === 0 && <div className="meta">Sem apropriação de subetapa informada na solicitação.</div>}
             {subs.map((s, i) => {

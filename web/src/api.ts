@@ -29,9 +29,19 @@ export interface InsumoOrcamento {
   custo_unit: number; familia: string; orcado_total: number; subetapas: SubetapaOrcada[]
 }
 
+export interface VarianteSaldo {
+  detail_id: number | null; detail_desc: string
+  trademark_id: number | null; trademark_desc: string
+  saldo: number; unidade: string | null
+}
 export interface SolicSiengeItem {
   item_number: number; resource_id: string; descricao: string
   quantidade: number; unidade: string | null
+  // detalhe/variação pedida (quando o Sienge informa) + projeção de estoque da compra
+  detail_id?: number | null; detail_desc?: string | null
+  trademark_id?: number | null; trademark_desc?: string | null
+  estoque_atual?: number; estoque_unidade?: string | null; estoque_projetado?: number
+  variantes?: VarianteSaldo[]
 }
 export interface SolicSienge {
   purchase_request_id: number; obra: string

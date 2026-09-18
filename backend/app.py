@@ -706,16 +706,67 @@ def _pendentes_todas():
             "notes": h.get("notes"), "status": h.get("status"),
             "itens": [{"item_number": it["itemNumber"], "resource_id": str(it["productId"]),
                        "descricao": it["productDescription"], "quantidade": it["quantity"],
-                       "unidade": it.get("unitySymbol")} for it in its],
+                       "unidade": it.get("unitySymbol"),
+                       # detalhe/variação pedida (quando o Sienge informa no item da solicitação;
+                       # ausente -> None -> o estoque é casado no nível do insumo)
+                       "detail_id": it.get("detailId"),
+                       "detail_desc": (it.get("detailDescription") or "").strip() or None,
+                       "trademark_id": it.get("trademarkId"),
+                       "trademark_desc": (it.get("trademarkDescription") or "").strip() or None}
+                      for it in its],
         })
     _PEND_CACHE.update(ts=_time.time(), data=out)
+    return out
+
+
+def _projecao_estoque(obra: str, itens: list[dict]) -> list[dict]:
+    """Anexa a cada item da solicitação de COMPRA a projeção de estoque:
+        estoque_projetado = estoque_atual + quantidade_solicitada   (compra: SOMA, nunca subtrai).
+    O estoque atual vem do inventário OFICIAL do Sienge (mesma fonte do módulo de
+    estoque — sem dados paralelos), casado no MESMO nível de identificação do item:
+    se a solicitação especifica um detalhe/marca, usa o saldo daquela variação;
+    caso contrário, usa o total do insumo e devolve o detalhamento por variação."""
+    inv = _estoque_inv(obra)
+    por_detalhe: dict[tuple, list] = {}   # (rid, detailId, trademarkId) -> [qtd, unidade]
+    por_recurso: dict[str, dict] = {}     # rid -> {total, unidade, variantes[]}
+    for r in inv:
+        rid = str(r.get("resourceId")); did = r.get("detailId"); tid = r.get("trademarkId")
+        q = r.get("quantity") or 0; u = r.get("unitOfMeasure")
+        cur = por_detalhe.get((rid, did, tid), [0, u])
+        cur[0] += q; cur[1] = cur[1] or u
+        por_detalhe[(rid, did, tid)] = cur
+        ac = por_recurso.setdefault(rid, {"total": 0.0, "unidade": u, "variantes": []})
+        ac["total"] += q; ac["unidade"] = ac["unidade"] or u
+        if q:
+            ac["variantes"].append({
+                "detail_id": did, "detail_desc": (r.get("detailDescription") or "").strip(),
+                "trademark_id": tid, "trademark_desc": (r.get("trademarkDescription") or "").strip(),
+                "saldo": round(q, 3), "unidade": u})
+    out = []
+    for it in itens:
+        rid = str(it["resource_id"]); did = it.get("detail_id"); tid = it.get("trademark_id")
+        if did is not None or tid is not None:      # pediu uma variação específica
+            atual, uni = por_detalhe.get((rid, did, tid), [0, it.get("unidade")])
+            variantes = []
+        else:                                        # pediu o insumo (sem variação): total + rateio
+            rec = por_recurso.get(rid)
+            atual = rec["total"] if rec else 0
+            uni = (rec["unidade"] if rec else None) or it.get("unidade")
+            variantes = sorted(rec["variantes"], key=lambda v: -v["saldo"]) if rec else []
+        qsol = it.get("quantidade") or 0
+        out.append({**it,
+                    "estoque_atual": round(atual, 3),
+                    "estoque_unidade": uni,
+                    "estoque_projetado": round(atual + qsol, 3),
+                    "variantes": variantes})
     return out
 
 
 @app.get("/api/aprovacao/pendentes")
 def pendentes(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
     obra_ou_erro(obra)
-    return {"solicitacoes": [s for s in _pendentes_todas() if s["obra"] == obra]}
+    sols = [s for s in _pendentes_todas() if s["obra"] == obra]
+    return {"solicitacoes": [{**s, "itens": _projecao_estoque(obra, s["itens"])} for s in sols]}
 
 
 @app.get("/api/aprovacao/item-subetapa")
