@@ -745,20 +745,26 @@ def _projecao_estoque(obra: str, itens: list[dict]) -> list[dict]:
     out = []
     for it in itens:
         rid = str(it["resource_id"]); did = it.get("detail_id"); tid = it.get("trademark_id")
+        rec = por_recurso.get(rid)
+        todas = sorted(rec["variantes"], key=lambda v: -v["saldo"]) if rec else []  # só saldo>0
         if did is not None or tid is not None:      # pediu uma variação específica
             atual, uni = por_detalhe.get((rid, did, tid), [0, it.get("unidade")])
             variantes = []
+            # complementar (informativo): OUTROS detalhes do mesmo insumo com estoque>0,
+            # exceto o próprio detalhe solicitado. Não altera nada da compra/estoque.
+            outros = [v for v in todas if not (v["detail_id"] == did and v["trademark_id"] == tid)]
         else:                                        # pediu o insumo (sem variação): total + rateio
-            rec = por_recurso.get(rid)
             atual = rec["total"] if rec else 0
             uni = (rec["unidade"] if rec else None) or it.get("unidade")
-            variantes = sorted(rec["variantes"], key=lambda v: -v["saldo"]) if rec else []
+            variantes = todas
+            outros = []  # sem detalhe pedido, o rateio (variantes) já mostra tudo
         qsol = it.get("quantidade") or 0
         out.append({**it,
                     "estoque_atual": round(atual, 3),
                     "estoque_unidade": uni,
                     "estoque_projetado": round(atual + qsol, 3),
-                    "variantes": variantes})
+                    "variantes": variantes,
+                    "outros_detalhes": outros})
     return out
 
 

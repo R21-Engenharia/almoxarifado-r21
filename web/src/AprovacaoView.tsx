@@ -244,6 +244,11 @@ function ItemCard({ c }: { c: ItemCtx }) {
   // nunca uma baixa/consumo. Só mostramos o rateio por variação quando a solicitação não
   // aponta um detalhe específico (aí o "atual" é o total do insumo).
   const vars = (!detalhe && item.variantes) ? item.variantes : []
+  // complementar/informativo: outros detalhes do MESMO insumo com estoque > 0 (exceto o pedido).
+  const outros = item.outros_detalhes ?? []
+  const [verTodos, setVerTodos] = useState(false)
+  const LIM = 6
+  const outrosMostra = verTodos ? outros : outros.slice(0, LIM)
   return (
     <div className="ctx-item">
       <div className="ctx-item-head">
@@ -270,6 +275,24 @@ function ItemCard({ c }: { c: ItemCtx }) {
             <span className="proj-lbl">Estoque projetado</span>
             <span className="proj-val">{num(item.estoque_projetado ?? item.estoque_atual! + item.quantidade, 2)}<i>{uni}</i></span>
           </div>
+        </div>
+      )}
+      {outros.length > 0 && (
+        <div className="outros">
+          <div className="outros-lbl">Outros detalhes disponíveis
+            <span className="outros-hint"> · mesmo insumo, em estoque (informativo)</span></div>
+          <div className="outros-list">
+            {outrosMostra.map((v, i) => (
+              <div key={i} className="outros-row">
+                <span className="outros-nome">{v.detail_desc || v.trademark_desc || 'sem detalhe'}</span>
+                <span className="outros-saldo">{num(v.saldo, 2)} <i>{v.unidade}</i></span>
+              </div>
+            ))}
+          </div>
+          {outros.length > LIM && (
+            <button type="button" className="outros-mais" onClick={() => setVerTodos(v => !v)}>
+              {verTodos ? 'ver menos' : `+${outros.length - LIM} com estoque`}</button>
+          )}
         </div>
       )}
       {vars.length > 0 && (

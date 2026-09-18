@@ -42,6 +42,8 @@ export interface SolicSiengeItem {
   trademark_id?: number | null; trademark_desc?: string | null
   estoque_atual?: number; estoque_unidade?: string | null; estoque_projetado?: number
   variantes?: VarianteSaldo[]
+  // outros detalhes do MESMO insumo com estoque > 0 (exceto o solicitado) — informativo
+  outros_detalhes?: VarianteSaldo[]
 }
 export interface SolicSienge {
   purchase_request_id: number; obra: string
