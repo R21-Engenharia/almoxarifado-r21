@@ -1,0 +1,42 @@
+# Keep-warm do backend (Render free) — pinga /api/health em horário útil para
+# evitar a hibernação (que causa o cold start de ~50s). Fora da janela, o serviço
+# hiberna de propósito (economiza as horas do free: ~234h/mês de ~750h).
+#
+# FUSO: o cron do GitHub é em UTC e o Brasil é UTC-3 (sem horário de verão).
+#   07:00 BRT = 10:00 UTC   |   18:00 BRT = 21:00 UTC   |   17:00 BRT = 20:00 UTC
+# Janela desejada: Seg-Qui 07h-18h, Sex 07h-17h (BRT).
+#
+# CONFIG: defina a variável de repositório BACKEND_URL (Settings > Secrets and
+#   variables > Actions > Variables) com a URL do backend no Render, ex.:
+#   https://almoxarifado-r21-api.onrender.com   (sem barra no final)
+#   Se não definir, usa esse valor como padrão.
+#
+# ATENÇÃO (limitações do GitHub Actions):
+#  - agendamentos podem ATRASAR alguns minutos (por isso pingamos a cada 10 min);
+#  - o GitHub DESATIVA workflows agendados após 60 dias sem commit no repo — se o
+#    repo ficar parado, reative em Actions ou faça um commit. (Alternativa mais
+#    robusta: cron-job.org / UptimeRobot com janela de manutenção.)
+name: keep-warm
+
+on:
+  schedule:
+    - cron: '*/10 10-20 * * 1-4'   # Seg-Qui, 07:00-~18:00 BRT (10:00-20:59 UTC)
+    - cron: '*/10 10-19 * * 5'     # Sex,     07:00-~17:00 BRT (10:00-19:59 UTC)
+  workflow_dispatch:               # permite disparar manualmente para testar
+
+# só um ping por vez; se um atrasar e colidir com o próximo, cancela o antigo
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          URL="${{ vars.BACKEND_URL || 'https://almoxarifado-r21-api.onrender.com' }}"
+          echo "Pingando $URL/api/health"
+          # --retry cobre o caso de o serviço estar acordando (cold start ~50s)
+          curl -fsS --max-time 90 --retry 3 --retry-delay 25 --retry-all-errors \
+               "$URL/api/health" && echo "" && echo "OK: backend respondeu."

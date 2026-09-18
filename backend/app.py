@@ -223,9 +223,39 @@ def _anexar_local(prevision_id: str, operacao: str, corpo, tipo_id: int):
 
 @app.get("/api/health")
 def health():
-    # público (não exige login) — usado para status e para o front saber o modo
+    # público (não exige login) — usado para status, para o front saber o modo
+    # e como alvo do keep-warm (ping periódico que evita a hibernação no Render free)
     return {"ok": True, "modo": "demo" if _modo_demo() else "sienge",
             "auth": _auth_ativo(), "obras": list(OBRAS.keys())}
+
+
+# ---- warm-up no boot -------------------------------------------------------
+# Pré-carrega a coleta em segundo plano assim que o backend sobe, para o PRIMEIRO
+# acesso não pagar o ~1 min de coleta do Sienge. Vale em qualquer host; no Render
+# free combina com o keep-warm (que evita a hibernação). Best-effort e NÃO bloqueia
+# o boot — o /api/health responde na hora enquanto o cache aquece atrás.
+_AQUECIDO = {"rodou": False}
+
+
+def _aquecer_cache():
+    if _AQUECIDO["rodou"] or _modo_demo():
+        return
+    _AQUECIDO["rodou"] = True
+    for obra in list(OBRAS.keys()):
+        try:
+            _movimentos(obra)   # 1x: carrega snapshot do disco ou baixa do Sienge (lento)
+            _analise(obra)      # aquece o motor de análise
+            _estoque_inv(obra)  # aquece o inventário (usado na autorização de compra)
+        except Exception:
+            pass                # nunca derruba o boot por causa do aquecimento
+
+
+@app.on_event("startup")
+def _on_startup():
+    if os.environ.get("ALMOX_WARMUP", "1") == "0":
+        return
+    import threading
+    threading.Thread(target=_aquecer_cache, name="warmup", daemon=True).start()
 
 
 @app.post("/api/estoque/atualizar")
