@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from 'react'
 import {
-  api, brl, num, familiaCurta, STATUS_LABEL,
+  api, brl, num, familiaCurta, STATUS_LABEL, novaChave,
   type Item, type Material, type Movimento, type Obra, type Status, type EscritaItem,
   type Embalagem,
 } from './api'
@@ -230,7 +230,7 @@ export default function App() {
           </Suspense>
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
-          {obra && secao === 'historico' && <Historico obra={obra} />}
+          {obra && secao === 'historico' && <Historico obra={obra} admin={(conta?.role || '').toLowerCase() === 'admin'} />}
         </main>
       </div>
     </div>
@@ -405,6 +405,13 @@ function Operar({ obra }: { obra: string }) {
   const [msg, setMsg] = useState('')
   const [confirmar, setConfirmar] = useState(false)
   const [gravando, setGravando] = useState(false)
+  const [erroGravar, setErroGravar] = useState('')
+  // chave de idempotência da cesta. A chave de cada item deriva do próprio item, então
+  // ela vale enquanto a cesta existir: itens já gravados nunca são reenviados, mesmo
+  // se a cesta for editada após uma falha. Renova ao esvaziar a cesta ou mudar op/obra.
+  const [chave, setChave] = useState<string | null>(null)
+  useEffect(() => { if (cesta.length === 0) setChave(null) }, [cesta])
+  useEffect(() => { setChave(null) }, [op, obra])
 
   const carregar = () => api.catalogo(obra).then(r => { setItens(r.itens); setMacros(r.macro_ordem) })
   const carregarEmb = () => api.embalagens().then(r => {
@@ -427,12 +434,19 @@ function Operar({ obra }: { obra: string }) {
 
   const gravar = async () => {
     const payload: EscritaItem[] = cesta.map(linhaParaEscrita)
-    setGravando(true)
+    const k = chave ?? novaChave()
+    setChave(k); setErroGravar(''); setGravando(true)
     try {
-      const r = op === 'baixa' ? await api.baixa(obra, payload) : await api.entrada(obra, payload)
-      setMsg(`✓ ${op === 'baixa' ? 'Baixa' : 'Entrada'} registrada (${r.auditoria_ids.length} item(ns)).`)
+      const r = op === 'baixa' ? await api.baixa(obra, payload, k) : await api.entrada(obra, payload, k)
+      const oper = op === 'baixa' ? 'Baixa' : 'Entrada'
+      setMsg(r.repetida
+        ? `✓ ${oper} já estava registrada — nada foi gravado de novo.`
+        : `✓ ${oper} registrada (${r.auditoria_ids.length} item(ns)).${r.aviso ? ' ⚠ ' + r.aviso : ''}`)
       setCesta([]); setConfirmar(false); carregar()
-    } catch (e) { setMsg('✗ ' + (e instanceof Error ? e.message : String(e))) }
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e)
+      setErroGravar(m); setMsg('✗ ' + m)
+    }
     finally { setGravando(false) }
   }
 
@@ -488,7 +502,7 @@ function Operar({ obra }: { obra: string }) {
       {cesta.length > 0 && (
         <div className="cesta-bar">
           <div className="cesta-info">{cesta.length} linha(s) · {op === 'baixa' ? 'baixa' : 'entrada'}</div>
-          <button className="cta" onClick={() => setConfirmar(true)}>Revisar e gravar</button>
+          <button className="cta" onClick={() => { setErroGravar(''); setConfirmar(true) }}>Revisar e gravar</button>
         </div>
       )}
 
@@ -506,9 +520,10 @@ function Operar({ obra }: { obra: string }) {
                 </li>
               ))}
             </ul>
+            {erroGravar && <div className="msg bad">{erroGravar}</div>}
             <div className="modal-acts">
               <button className="ghost" onClick={() => setConfirmar(false)} disabled={gravando}>Cancelar</button>
-              <button className="cta" onClick={gravar} disabled={gravando}>{gravando ? 'Gravando no Sienge…' : 'Confirmar e gravar'}</button>
+              <button className="cta" onClick={gravar} disabled={gravando}>{gravando ? 'Gravando no Sienge…' : erroGravar ? 'Tentar de novo' : 'Confirmar e gravar'}</button>
             </div>
           </div>
         </div>
@@ -519,7 +534,10 @@ function Operar({ obra }: { obra: string }) {
 
 
 /* ----------------------------------------------------------- Histórico */
-function Historico({ obra }: { obra: string }) {
+// status da gravação no Sienge (linhas antigas não têm status = gravadas)
+const STATUS_MOV: Record<string, string> = { pendente: 'sem confirmação', falhou: 'recusado pelo Sienge' }
+
+function Historico({ obra, admin }: { obra: string; admin: boolean }) {
   const [movs, setMovs] = useState<Movimento[]>([])
   const [msg, setMsg] = useState('')
   const [estornandoId, setEstornandoId] = useState<number | null>(null)
@@ -547,11 +565,14 @@ function Historico({ obra }: { obra: string }) {
                 <tr key={m.id} className={m.estornado ? 'estornado' : ''}>
                   <td>{new Date(m.criado_em).toLocaleString('pt-BR')}</td>
                   <td><span className={`op ${m.operacao}`}>{m.operacao}</span></td>
-                  <td><div className="desc">{m.descricao || '#' + m.resource_id}</div><div className="meta">#{m.resource_id} · {m.document_id}</div></td>
+                  <td><div className="desc">{m.descricao || '#' + m.resource_id}</div>
+                    <div className="meta">#{m.resource_id}{m.variante ? ` · ${m.variante}` : ''} · {m.document_id}</div>
+                    {m.status && STATUS_MOV[m.status] &&
+                      <div className="meta"><span className={`mov-st ${m.status}`} title={m.erro || undefined}>{STATUS_MOV[m.status]}</span>{m.erro ? ` · ${m.erro}` : ''}</div>}</td>
                   <td className="r">{num(m.quantidade, 2)} {m.unidade}</td>
                   <td className="who-cell">{m.usuario}</td>
                   <td className="r">
-                    {m.operacao !== 'estorno' && !m.estornado &&
+                    {admin && m.operacao !== 'estorno' && !m.estornado && (m.status ?? 'gravado') === 'gravado' &&
                       <button className="mini" onClick={() => estornar(m)} disabled={estornandoId !== null}>
                         {estornandoId === m.id ? 'Estornando…' : 'Estornar'}</button>}
                     {m.estornado ? <span className="badge">estornado</span> : null}

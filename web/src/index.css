@@ -602,6 +602,10 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .who-cell { font-size: 12px; color: var(--muted); }
 .mini { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
 .badge { font-size: 11px; color: var(--muted); }
+/* status da gravação no Sienge (Histórico): pendente = sem confirmação; falhou = recusado */
+.mov-st { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+.mov-st.pendente { background: #eab30822; color: var(--baixo); }
+.mov-st.falhou { background: #ef444422; color: var(--ruptura); }
 tr.estornado { opacity: .5; }
 
 /* ident */

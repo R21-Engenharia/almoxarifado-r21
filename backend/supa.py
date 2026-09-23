@@ -97,6 +97,21 @@ def perms_do_email(email: str) -> dict | None:
     return None
 
 
+_PERMS_CACHE: dict[str, tuple[dict | None, float]] = {}
+_PERMS_TTL = 60  # curto: desativar alguém vale em até 1 min
+
+
+def perms_cache(email: str) -> dict | None:
+    """perms_do_email com cache curto — é consultado em TODA rota (checagem de obra/módulo)."""
+    agora = time.time()
+    c = _PERMS_CACHE.get(email)
+    if c and c[1] > agora:
+        return c[0]
+    row = perms_do_email(email)
+    _PERMS_CACHE[email] = (row, agora + _PERMS_TTL)
+    return row
+
+
 def role_do_email(email: str) -> str | None:
     """Retorna a role ('admin'/'user'/...) ou None se não autorizado/inativo."""
     agora = time.time()
@@ -121,6 +136,7 @@ def listar_usuarios() -> list[dict]:
 def upsert_usuario(dados: dict) -> dict:
     """Cria/atualiza um usuário (chave = email). Invalida o cache de role."""
     _ROLE_CACHE.pop(dados.get("email", ""), None)
+    _PERMS_CACHE.pop(dados.get("email", ""), None)
     with httpx.Client(timeout=TIMEOUT) as cli:
         r = cli.post(f"{_url()}{_AE}?on_conflict=email",
                      headers={**_headers_admin(), "Prefer": "resolution=merge-duplicates,return=representation"},
@@ -163,13 +179,34 @@ def deletar_embalagem(emb_id: str):
 
 
 # ---------------------------------------------------------------- auditoria
+# Uma linha por item. status: pendente (enviado ao Sienge, sem confirmação) ->
+# gravado | falhou. chave_idempotencia é única por item: repetir a gravação com
+# a mesma chave não reenvia. Colunas novas vêm da migração schema_migra_2026_09_A.sql.
 
 TBL = "/rest/v1/estoque_movimentos"
+_CAMPOS_ITEM = ("detail_id", "trademark_id", "variante", "embalagem", "fator_embalagem",
+                "chave_idempotencia")
+
+
+def _checar(r: httpx.Response):
+    """raise_for_status com mensagem útil quando falta a migração do banco."""
+    if r.status_code >= 400:
+        txt = r.text or ""
+        if "PGRST204" in txt or "column" in txt.lower():
+            raise AuthError("Banco desatualizado: rode backend/schema_migra_2026_09_A.sql "
+                            "no SQL Editor do Supabase. (" + txt[:120] + ")", 503)
+        raise AuthError(txt[:200] or f"Supabase {r.status_code}", r.status_code)
+
+
+def _in(valores) -> str:
+    """Filtro PostgREST in.(...) com aspas (as chaves têm ':')."""
+    return "in.(" + ",".join(f'"{v}"' for v in valores) + ")"
 
 
 def registrar(usuario, obra, operacao, movement_type_id, document_id,
               movement_date, sienge_status, sienge_movement_id, sienge_resposta,
-              itens, estorno_de=None, terceiro=None, solicitante=None) -> list[int]:
+              itens, estorno_de=None, terceiro=None, solicitante=None,
+              status="gravado") -> list[int]:
     linhas = [{
         "usuario": usuario, "obra": str(obra),
         "resource_id": str(it["resource_id"]), "descricao": it.get("descricao"),
@@ -178,13 +215,47 @@ def registrar(usuario, obra, operacao, movement_type_id, document_id,
         "document_id": document_id, "movement_date": movement_date,
         "sienge_status": sienge_status, "sienge_movement_id": str(sienge_movement_id or ""),
         "sienge_resposta": sienge_resposta, "estorno_de": estorno_de,
-        "terceiro": terceiro, "solicitante": solicitante,
+        "terceiro": terceiro, "solicitante": solicitante, "status": status,
+        **{k: it.get(k) for k in _CAMPOS_ITEM},
     } for it in itens]
     with httpx.Client(timeout=TIMEOUT) as cli:
         r = cli.post(f"{_url()}{TBL}", headers={**_headers_admin(), "Prefer": "return=representation"},
                      json=linhas)
-        r.raise_for_status()
+        _checar(r)
         return [row["id"] for row in r.json()]
+
+
+def atualizar(ids: list[int], *, status=None, sienge_status=None, sienge_movement_id=None,
+              sienge_resposta=None, erro=None, liberar_chave=False):
+    """Fecha o resultado da gravação no Sienge. liberar_chave zera a chave (falha
+    definitiva: a mesma cesta pode ser gravada de novo sem esbarrar na unicidade)."""
+    if not ids:
+        return
+    patch: dict = {}
+    for k, v in (("status", status), ("sienge_status", sienge_status), ("erro", erro),
+                 ("sienge_resposta", sienge_resposta)):
+        if v is not None:
+            patch[k] = v
+    if sienge_movement_id is not None:
+        patch["sienge_movement_id"] = str(sienge_movement_id)
+    if liberar_chave:
+        patch["chave_idempotencia"] = None
+    if not patch:
+        return
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.patch(f"{_url()}{TBL}", params={"id": "in.(" + ",".join(str(i) for i in ids) + ")"},
+                      headers=_headers_admin(), json=patch)
+        _checar(r)
+
+
+def por_chaves(chaves: list[str]) -> list[dict]:
+    if not chaves:
+        return []
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.get(f"{_url()}{TBL}", params={"chave_idempotencia": _in(chaves), "select": "*"},
+                    headers=_headers_admin())
+        _checar(r)
+        return r.json()
 
 
 def historico(obra: str, limite: int = 200) -> list[dict]:
@@ -205,7 +276,69 @@ def por_id(aud_id: int) -> dict | None:
         return rows[0] if rows else None
 
 
-def marcar_estornado(aud_id: int):
+def reservar_estorno(aud_id: int) -> bool:
+    """estornado=true só se ainda estava false e a linha está gravada (compare-and-set).
+    True = esta chamada reservou; False = outra chamada já estornou/está estornando."""
     with httpx.Client(timeout=TIMEOUT) as cli:
-        cli.patch(f"{_url()}{TBL}", params={"id": f"eq.{aud_id}"},
-                  headers=_headers_admin(), json={"estornado": True})
+        r = cli.patch(f"{_url()}{TBL}",
+                      params={"id": f"eq.{aud_id}", "estornado": "is.false", "status": "eq.gravado"},
+                      headers={**_headers_admin(), "Prefer": "return=representation"},
+                      json={"estornado": True})
+        _checar(r)
+        return bool(r.json())
+
+
+def liberar_estorno(aud_id: int):
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.patch(f"{_url()}{TBL}", params={"id": f"eq.{aud_id}"},
+                      headers=_headers_admin(), json={"estornado": False})
+        _checar(r)
+
+
+# ---------------------------------------------------------------- aprovação
+# Estado da dupla aprovação (overlay sobre a solicitação do Sienge). Só o backend
+# grava (service_role); o front apenas lê. Transições por compare-and-set no status.
+_APROV = "/rest/v1/aprov_sienge"
+_APROV_EV = "/rest/v1/aprov_sienge_eventos"
+
+
+def aprov_get(pr: int) -> dict | None:
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.get(f"{_url()}{_APROV}", params={"purchase_request_id": f"eq.{pr}", "limit": 1},
+                    headers=_headers_admin())
+        _checar(r)
+        rows = r.json()
+        return rows[0] if rows else None
+
+
+def aprov_garantir(pr: int, obra: str) -> dict:
+    """Cria a linha (aguardando_engenharia) se não existir; devolve a linha atual."""
+    atual = aprov_get(pr)
+    if atual:
+        return atual
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.post(f"{_url()}{_APROV}?on_conflict=purchase_request_id",
+                     headers={**_headers_admin(), "Prefer": "resolution=ignore-duplicates"},
+                     json={"purchase_request_id": pr, "obra": str(obra),
+                           "status": "aguardando_engenharia"})
+        _checar(r)
+    return aprov_get(pr) or {}
+
+
+def aprov_transicionar(pr: int, de_status: str, patch: dict) -> dict | None:
+    """Aplica `patch` só se o status ainda for `de_status`. None = alguém agiu antes."""
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.patch(f"{_url()}{_APROV}",
+                      params={"purchase_request_id": f"eq.{pr}", "status": f"eq.{de_status}"},
+                      headers={**_headers_admin(), "Prefer": "return=representation"}, json=patch)
+        _checar(r)
+        rows = r.json()
+        return rows[0] if rows else None
+
+
+def aprov_evento(pr: int, etapa: str, acao: str, usuario: str, observacao: str | None = None):
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        r = cli.post(f"{_url()}{_APROV_EV}", headers=_headers_admin(),
+                     json={"purchase_request_id": pr, "etapa": etapa, "acao": acao,
+                           "usuario": usuario, "observacao": observacao or None})
+        _checar(r)

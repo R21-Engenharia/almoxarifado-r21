@@ -1,7 +1,11 @@
 """Auditoria local em SQLite (independente — sem Supabase).
 
-Uma linha por item. Batch compartilha o mesmo sienge_movement_id. Estorno lê a
-linha e grava o oposto, marcando estornado=true. Espelha o schema do handoff.
+Uma linha por item. Batch compartilha o mesmo sienge_movement_id. Espelha o
+schema do Supabase (mesmas colunas e mesma semântica de status):
+
+  status      pendente -> gravado | falhou   (pendente = enviado ao Sienge sem confirmação)
+  chave_idempotencia  única por item; repetir a gravação com a mesma chave não reenvia.
+  estornado   reservado atomicamente antes do estorno (evita estorno duplo).
 """
 from __future__ import annotations
 import os
@@ -32,10 +36,27 @@ create table if not exists estoque_movimentos (
   estornado integer not null default 0,
   removido_no_sienge integer not null default 0,
   terceiro text,
-  solicitante text
+  solicitante text,
+  detail_id integer,
+  trademark_id integer,
+  variante text,
+  embalagem text,
+  fator_embalagem real,
+  chave_idempotencia text,
+  status text not null default 'gravado',
+  erro text
 );
 create index if not exists idx_estoque_mov_obra on estoque_movimentos(obra, criado_em desc);
 """
+
+# colunas acrescentadas depois da primeira versão (migração de bancos antigos)
+_COLS_NOVAS = ("terceiro text", "solicitante text", "detail_id integer", "trademark_id integer",
+               "variante text", "embalagem text", "fator_embalagem real",
+               "chave_idempotencia text", "status text not null default 'gravado'", "erro text")
+
+# campos de item gravados junto com a linha
+_CAMPOS_ITEM = ("detail_id", "trademark_id", "variante", "embalagem", "fator_embalagem",
+                "chave_idempotencia")
 
 
 def _conn():
@@ -44,20 +65,29 @@ def _conn():
     return c
 
 
+def _row(r) -> dict:
+    d = dict(r)
+    d["estornado"] = bool(d.get("estornado"))
+    d["removido_no_sienge"] = bool(d.get("removido_no_sienge"))
+    return d
+
+
 def init_db():
     with _conn() as c:
         c.executescript(_DDL)
-        # migração: garante colunas novas em bancos antigos
-        for col in ("terceiro text", "solicitante text"):
+        for col in _COLS_NOVAS:
             try:
                 c.execute(f"alter table estoque_movimentos add column {col}")
             except sqlite3.OperationalError:
                 pass  # já existe
+        c.execute("create unique index if not exists ux_estoque_mov_chave "
+                  "on estoque_movimentos(chave_idempotencia) where chave_idempotencia is not null")
 
 
 def registrar(usuario, obra, operacao, movement_type_id, document_id,
               movement_date, sienge_status, sienge_movement_id, sienge_resposta,
-              itens, estorno_de=None, terceiro=None, solicitante=None) -> list[int]:
+              itens, estorno_de=None, terceiro=None, solicitante=None,
+              status="gravado") -> list[int]:
     """Grava uma linha por item. Retorna os ids criados."""
     ids = []
     agora = datetime.now(timezone.utc).isoformat()
@@ -68,16 +98,52 @@ def registrar(usuario, obra, operacao, movement_type_id, document_id,
                 (criado_em, usuario, obra, resource_id, descricao, operacao,
                  movement_type_id, quantidade, unidade, document_id, movement_date,
                  sienge_status, sienge_movement_id, sienge_resposta, estorno_de,
-                 terceiro, solicitante)
-                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 terceiro, solicitante, status,
+                 detail_id, trademark_id, variante, embalagem, fator_embalagem, chave_idempotencia)
+                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (agora, usuario, obra, str(it["resource_id"]), it.get("descricao"),
                  operacao, movement_type_id, float(it["quantidade"]), it.get("unidade"),
                  document_id, movement_date, sienge_status, str(sienge_movement_id or ""),
                  json.dumps(sienge_resposta, ensure_ascii=False), estorno_de,
-                 terceiro, solicitante),
+                 terceiro, solicitante, status,
+                 *(it.get(k) for k in _CAMPOS_ITEM)),
             )
             ids.append(cur.lastrowid)
     return ids
+
+
+def atualizar(ids: list[int], *, status=None, sienge_status=None, sienge_movement_id=None,
+              sienge_resposta=None, erro=None, liberar_chave=False):
+    """Fecha o resultado da gravação no Sienge nas linhas `ids`.
+    liberar_chave=True zera a chave (falha definitiva: a mesma cesta pode ser regravada)."""
+    if not ids:
+        return
+    sets, vals = [], []
+    for col, v in (("status", status), ("sienge_status", sienge_status), ("erro", erro)):
+        if v is not None:
+            sets.append(f"{col}=?"); vals.append(v)
+    if sienge_movement_id is not None:
+        sets.append("sienge_movement_id=?"); vals.append(str(sienge_movement_id))
+    if sienge_resposta is not None:
+        sets.append("sienge_resposta=?"); vals.append(json.dumps(sienge_resposta, ensure_ascii=False))
+    if liberar_chave:
+        sets.append("chave_idempotencia=null")
+    if not sets:
+        return
+    marks = ",".join("?" * len(ids))
+    with _conn() as c:
+        c.execute(f"update estoque_movimentos set {', '.join(sets)} where id in ({marks})",
+                  (*vals, *ids))
+
+
+def por_chaves(chaves: list[str]) -> list[dict]:
+    if not chaves:
+        return []
+    marks = ",".join("?" * len(chaves))
+    with _conn() as c:
+        rows = c.execute(f"select * from estoque_movimentos where chave_idempotencia in ({marks})",
+                         tuple(chaves)).fetchall()
+    return [_row(r) for r in rows]
 
 
 def historico(obra: str, limite: int = 200) -> list[dict]:
@@ -86,15 +152,24 @@ def historico(obra: str, limite: int = 200) -> list[dict]:
             "select * from estoque_movimentos where obra=? order by criado_em desc limit ?",
             (str(obra), limite),
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [_row(r) for r in rows]
 
 
 def por_id(aud_id: int) -> dict | None:
     with _conn() as c:
         r = c.execute("select * from estoque_movimentos where id=?", (aud_id,)).fetchone()
-    return dict(r) if r else None
+    return _row(r) if r else None
 
 
-def marcar_estornado(aud_id: int):
+def reservar_estorno(aud_id: int) -> bool:
+    """Marca estornado=1 só se ainda não estava (compare-and-set). True = reservou."""
     with _conn() as c:
-        c.execute("update estoque_movimentos set estornado=1 where id=?", (aud_id,))
+        cur = c.execute("update estoque_movimentos set estornado=1 "
+                        "where id=? and estornado=0 and status='gravado'", (aud_id,))
+        return cur.rowcount == 1
+
+
+def liberar_estorno(aud_id: int):
+    """Desfaz a reserva quando o estorno falhou de forma definitiva no Sienge."""
+    with _conn() as c:
+        c.execute("update estoque_movimentos set estornado=0 where id=?", (aud_id,))

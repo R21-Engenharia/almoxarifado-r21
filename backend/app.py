@@ -27,7 +27,12 @@ def _carregar_env():
 
 _carregar_env()
 
-from fastapi import FastAPI, HTTPException, Header, Query, Depends
+import hashlib
+import re
+from collections import Counter
+from typing import Literal
+
+from fastapi import FastAPI, HTTPException, Header, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
@@ -92,16 +97,56 @@ def usuario_gestor(authorization: str | None = Header(default=None)) -> str:
     return email
 
 
-def usuario_operador(authorization: str | None = Header(default=None)) -> str:
-    """Exige permissão de operar o almoxarifado (baixa/entrada) — flag operar ou role admin.
-    Assim o almoxarife (role user + operar) consegue operar, sem precisar ser admin."""
-    email = usuario_logado(authorization)
+# ---- permissões aplicadas NO SERVIDOR (obra, módulo, operar) -----------------
+# O front só esconde menus; quem garante o acesso é esta camada. Regra do perfil:
+# lista vazia = todas as obras / todos os módulos; role admin passa por tudo.
+def _perfil(email: str) -> dict:
+    return _perfil_norm(supa.perms_cache(email), email)
+
+
+def _eh_admin(p: dict) -> bool:
+    return (p.get("role") or "").lower() == "admin"
+
+
+def _checar_acesso(email: str, obra: str | None, modulos: tuple[str, ...] = ()):
+    """403 se o perfil não inclui a obra ou nenhum dos módulos que usam a rota."""
     if not _auth_ativo():
-        return email  # dev local
-    p = supa.perms_do_email(email) or {}
-    if not (p.get("operar") or (p.get("role") or "").lower() == "admin"):
+        return  # dev local sem Supabase
+    p = _perfil(email)
+    if _eh_admin(p):
+        return
+    if obra is not None and p["obras"] and str(obra) not in {str(o) for o in p["obras"]}:
+        raise HTTPException(403, "Seu perfil não tem acesso a esta obra.")
+    if modulos and p["modulos"] and not any(m in p["modulos"] for m in modulos):
+        raise HTTPException(403, "Seu perfil não tem acesso a este módulo.")
+
+
+def _exigir_operar(email: str):
+    if not _auth_ativo():
+        return
+    p = _perfil(email)
+    if not (p["operar"] or _eh_admin(p)):
         raise HTTPException(403, "Você não tem permissão para operar o almoxarifado (baixa/entrada).")
-    return email
+
+
+def acesso(*modulos: str):
+    """Dependência: usuário logado + obra (?obra=) e módulo permitidos no perfil.
+    `modulos` = telas que usam a rota; basta ter uma delas."""
+    def dep(request: Request, authorization: str | None = Header(default=None)) -> str:
+        email = usuario_logado(authorization)
+        _checar_acesso(email, request.query_params.get("obra"), modulos)
+        return email
+    return dep
+
+
+def operador(*modulos: str):
+    """acesso(...) + flag operar (grava no Sienge)."""
+    def dep(request: Request, authorization: str | None = Header(default=None)) -> str:
+        email = usuario_logado(authorization)
+        _checar_acesso(email, request.query_params.get("obra"), modulos)
+        _exigir_operar(email)
+        return email
+    return dep
 
 import json
 from datetime import datetime
@@ -196,21 +241,26 @@ def _analise(prevision_id: str, janela_dias: int = 90) -> dict:
     return res
 
 
-def _anexar_local(prevision_id: str, operacao: str, corpo, tipo_id: int):
-    """Após gravar no Sienge, anexa o movimento ao cache (evita re-baixar tudo).
-    Reflete o saldo imediatamente; os valores reais chegam no próximo 'atualizar'."""
+def _anexar_local(prevision_id: str, itens: list, tipo_id: int, precos: dict | None = None):
+    """Após gravar no Sienge, anexa os itens CONFIRMADOS ao cache (evita re-baixar tudo).
+    Reflete o saldo imediatamente; os valores reais chegam no próximo 'atualizar'.
+    `precos` (resource_id -> preço) = preço usado na entrada, p/ não diluir o custo médio."""
+    if not itens:
+        return
     if prevision_id not in _MOVS_CACHE:
         _movimentos(prevision_id)
     movs = _MOVS_CACHE[prevision_id]
-    io = "OUTPUT" if operacao in ("baixa",) or tipo_id in (2, 10) else "INPUT"
+    io = "OUTPUT" if tipo_id in (2, 10) else "INPUT"
     tipo_desc = "Consumo" if tipo_id == 2 else (
         "Inicialização - Entrada Avulsa" if tipo_id == 9 else "Inicialização - Saída Avulsa")
-    for i in corpo.itens:
+    for i in itens:
         movs.append({
             "id": f"local-{len(movs)}", "resourceId": i.resource_id,
             "resourceDescription": i.descricao or "", "inputOutput": io,
             "movementTypeId": tipo_id, "movementTypeDescription": tipo_desc,
-            "movementQuantity": i.quantidade, "movementValue": 0,
+            "movementQuantity": i.quantidade,
+            "movementValue": (precos or {}).get(str(i.resource_id), 0),
+            "detailId": i.detail_id, "trademarkId": i.trademark_id,
             "movementDate": date.today().isoformat(),
             "baseUnitOfMeasureSymbol": i.unidade or "", "unitOfMeasureSymbol": i.unidade or "",
             "supplierName": None,
@@ -259,7 +309,7 @@ def _on_startup():
 
 
 @app.post("/api/estoque/atualizar")
-def atualizar(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
+def atualizar(obra: str = Query(...), usuario: str = Depends(acesso("estoque"))):
     """Re-baixa o histórico completo do Sienge (lento). Use quando quiser puxar
     movimentos feitos por fora do app."""
     obra_ou_erro(obra)
@@ -270,10 +320,15 @@ def atualizar(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
 @app.get("/api/obras")
 def listar_obras(usuario: str = Depends(usuario_logado)):
     demo = _modo_demo()
+    permitidas = None  # None = todas
+    if _auth_ativo():
+        p = _perfil(usuario)
+        if not _eh_admin(p) and p["obras"]:
+            permitidas = {str(o) for o in p["obras"]}
     return [
         {"prevision_id": pid,
          "nome": (o["nome"] + " (DEMO)") if demo else o["nome"]}
-        for pid, o in OBRAS.items()
+        for pid, o in OBRAS.items() if permitidas is None or pid in permitidas
     ]
 
 
@@ -345,7 +400,7 @@ def usuarios_salvar(corpo: UsuarioIn, usuario: str = Depends(usuario_gestor)):
 
 @app.get("/api/estoque/material")
 def material(obra: str = Query(...), janela_dias: int = 90,
-             usuario: str = Depends(usuario_logado)):
+             usuario: str = Depends(acesso("estoque"))):
     obra_ou_erro(obra)
     res = _analise(obra, janela_dias)
     # a tela de Estoque só usa kpis + alertas + parados; a lista completa (1500+ itens)
@@ -376,7 +431,7 @@ def _linha_abc(i: dict, pct: float, acum, cls: str) -> dict:
 
 @app.get("/api/estoque/curva-abc")
 def curva_abc(obra: str = Query(...), janela_dias: int = 90,
-              usuario: str = Depends(usuario_logado)):
+              usuario: str = Depends(acesso("estoque"))):
     """Curva ABC por capital em estoque + última entrada/consumo por item.
     A/B/C pelo % acumulado do valor (80/95). Itens sem saldo entram como '—'."""
     obra_ou_erro(obra)
@@ -445,7 +500,7 @@ def _estoque_inv(obra: str, force: bool = False) -> list[dict]:
 
 @app.get("/api/estoque/insumo-variantes")
 def insumo_variantes(obra: str = Query(...), resource_id: str = Query(...),
-                     todas: bool = False, usuario: str = Depends(usuario_logado)):
+                     todas: bool = False, usuario: str = Depends(acesso("operar", "requisicao"))):
     """Variações (cor/bitola/spec/marca) de um insumo. Na BAIXA (todas=false):
     só as que têm saldo na obra. Na ENTRADA (todas=true): todas as cadastradas
     (a variação pode ainda não ter entrado), com o saldo atual anexado."""
@@ -501,14 +556,14 @@ class EmbalagemIn(BaseModel):
 
 
 @app.get("/api/estoque/embalagens")
-def embalagens_listar(usuario: str = Depends(usuario_logado)):
+def embalagens_listar(usuario: str = Depends(acesso("operar", "requisicao"))):
     if not _auth_ativo():
         return {"embalagens": []}
     return {"embalagens": supa.listar_embalagens()}
 
 
 @app.post("/api/estoque/embalagens")
-def embalagens_salvar(corpo: EmbalagemIn, usuario: str = Depends(usuario_operador)):
+def embalagens_salvar(corpo: EmbalagemIn, usuario: str = Depends(operador("operar", "requisicao"))):
     if corpo.fator <= 0:
         raise HTTPException(422, "O fator da embalagem precisa ser maior que zero.")
     dados = corpo.model_dump()
@@ -520,7 +575,7 @@ def embalagens_salvar(corpo: EmbalagemIn, usuario: str = Depends(usuario_operado
 
 
 @app.delete("/api/estoque/embalagens/{emb_id}")
-def embalagens_deletar(emb_id: str, usuario: str = Depends(usuario_operador)):
+def embalagens_deletar(emb_id: str, usuario: str = Depends(operador("operar", "requisicao"))):
     try:
         supa.deletar_embalagem(emb_id)
     except supa.AuthError as e:
@@ -530,14 +585,14 @@ def embalagens_deletar(emb_id: str, usuario: str = Depends(usuario_operador)):
 
 @app.get("/api/estoque/financeiro")
 def financeiro(obra: str = Query(...), meses: int = 12,
-               usuario: str = Depends(usuario_logado)):
+               usuario: str = Depends(acesso("financeiro"))):
     obra_ou_erro(obra)
     return _memo(obra, f"financeiro:{meses}", lambda: engine.financeiro(_movimentos(obra), hoje=date.today(), meses=meses))
 
 
 @app.get("/api/estoque/consumo")
 def consumo(obra: str = Query(...), meses: int = 12,
-            usuario: str = Depends(usuario_logado)):
+            usuario: str = Depends(acesso("consumo"))):
     obra_ou_erro(obra)
     return _memo(obra, f"consumo:{meses}", lambda: engine.consumo(_movimentos(obra), hoje=date.today(), meses=meses))
 
@@ -582,7 +637,7 @@ def _nomes_fornecedores(prevision_id: str) -> dict[str, str]:
 
 @app.get("/api/estoque/fornecedores")
 def fornecedores(obra: str = Query(...), meses: int = 12,
-                 usuario: str = Depends(usuario_logado)):
+                 usuario: str = Depends(acesso("fornecedores"))):
     obra_ou_erro(obra)
     return _memo(obra, f"fornecedores:{meses}", lambda: engine.fornecedores(
         _pedidos(obra), _nomes_fornecedores(obra), hoje=date.today(), meses=meses))
@@ -590,7 +645,7 @@ def fornecedores(obra: str = Query(...), meses: int = 12,
 
 @app.get("/api/estoque/recebimentos")
 def recebimentos(obra: str = Query(...), meses: int = 12,
-                 usuario: str = Depends(usuario_logado)):
+                 usuario: str = Depends(acesso("recebimentos"))):
     obra_ou_erro(obra)
     return _memo(obra, f"recebimentos:{meses}", lambda: engine.recebimentos(
         _pedidos(obra), _movimentos(obra), _nomes_fornecedores(obra), hoje=date.today(), meses=meses))
@@ -598,7 +653,7 @@ def recebimentos(obra: str = Query(...), meses: int = 12,
 
 @app.get("/api/estoque/pedido-itens")
 def pedido_itens(obra: str = Query(...), pedido_id: int = Query(...),
-                 usuario: str = Depends(usuario_logado)):
+                 usuario: str = Depends(acesso("recebimentos"))):
     """Itens de um pedido de compra (para abrir a solicitação da fila de recebimentos)."""
     obra_ou_erro(obra)
     if _modo_demo():
@@ -621,7 +676,7 @@ def pedido_itens(obra: str = Query(...), pedido_id: int = Query(...),
 
 @app.get("/api/estoque/suprimentos")
 def suprimentos(obra: str = Query(...), cobertura_alvo: int = 45,
-                usuario: str = Depends(usuario_logado)):
+                usuario: str = Depends(acesso("suprimentos"))):
     """MRP preditivo: junta a análise de consumo (ruptura por insumo), o lead time
     real por fornecedor (recebimentos) e o % no prazo (fornecedores)."""
     obra_ou_erro(obra)
@@ -669,7 +724,7 @@ def _resolver_wbs(mapa: dict, building_unit_id, code) -> dict:
 
 @app.get("/api/aprovacao/insumo-orcamento")
 def insumo_orcamento(obra: str = Query(...), resource_id: str = Query(...),
-                     usuario: str = Depends(usuario_logado)):
+                     usuario: str = Depends(acesso("aprovacao"))):
     """Contexto de um insumo para a análise da solicitação: onde está orçado
     (subetapas WBS + qtd orçada), saldo de estoque e custo. Base do visualizador."""
     o = obra_ou_erro(obra)
@@ -799,7 +854,7 @@ def _projecao_estoque(obra: str, itens: list[dict]) -> list[dict]:
 
 
 @app.get("/api/aprovacao/pendentes")
-def pendentes(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
+def pendentes(obra: str = Query(...), usuario: str = Depends(acesso("aprovacao"))):
     obra_ou_erro(obra)
     sols = [s for s in _pendentes_todas() if s["obra"] == obra]
     return {"solicitacoes": [{**s, "itens": _projecao_estoque(obra, s["itens"])} for s in sols]}
@@ -807,7 +862,7 @@ def pendentes(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
 
 @app.get("/api/aprovacao/item-subetapa")
 def item_subetapa(obra: str = Query(...), pr_id: int = Query(...), item_number: int = Query(...),
-                  usuario: str = Depends(usuario_logado)):
+                  usuario: str = Depends(acesso("aprovacao"))):
     """Subetapas (WBS) que o item da solicitação está pedindo, com descrição e %."""
     obra_ou_erro(obra)
     if _modo_demo():
@@ -823,34 +878,110 @@ def item_subetapa(obra: str = Query(...), pr_id: int = Query(...), item_number: 
     return {"subetapas": subs}
 
 
-class SolicAcao(BaseModel):
+class AprovAcao(BaseModel):
     purchase_request_id: int
-    motivo: str | None = None
+    etapa: Literal["engenharia", "planejamento"]
+    acao: Literal["aprovada", "reprovada", "devolvida"]
+    obs: str | None = None
 
 
-@app.post("/api/aprovacao/sienge/autorizar")
-def sienge_autorizar(corpo: SolicAcao, usuario: str = Depends(usuario_logado)):
-    """Autoriza a solicitação no Sienge (após a dupla aprovação no BOX21)."""
+# etapa -> (status em que a solicitação precisa estar, papéis que podem agir)
+_ETAPAS = {
+    "engenharia": ("aguardando_engenharia", ("engenheiro", "admin")),
+    "planejamento": ("aguardando_planejamento", ("planejamento", "admin")),
+}
+
+
+@app.post("/api/aprovacao/acao")
+def aprovacao_acao(corpo: AprovAcao, obra: str = Query(...),
+                   usuario: str = Depends(acesso("aprovacao"))):
+    """Dupla aprovação aplicada NO SERVIDOR (Engenharia -> Planejamento -> Sienge).
+
+    Confere o papel do usuário, a etapa em que a solicitação está e se ela ainda
+    aguarda autorização no Sienge. A transição é compare-and-set no status: se
+    outra pessoa agiu antes, devolve 409. Só a aprovação do Planejamento autoriza
+    no Sienge; reprovar grava a reprovação no Sienge; devolver fica só no BOX21."""
+    obra_ou_erro(obra)
+    pr, etapa, acao = corpo.purchase_request_id, corpo.etapa, corpo.acao
+    status_exigido, papeis = _ETAPAS[etapa]
+    papel = (_perfil(usuario).get("role") or "").lower() if _auth_ativo() else "admin"
+    if papel not in papeis:
+        raise HTTPException(403, f"A etapa de {etapa} é feita por: {' ou '.join(papeis)}.")
+    obs = (corpo.obs or "").strip()
+    if acao in ("reprovada", "devolvida") and not obs:
+        raise HTTPException(422, "Informe o motivo.")
+    if not supa.configurado():
+        raise HTTPException(503, "As aprovações exigem o Supabase configurado.")
+
+    if not _modo_demo():
+        # a solicitação tem que estar pendente no Sienge e ser desta obra
+        _PEND_CACHE["ts"] = 0.0
+        pend = {s["purchase_request_id"]: s for s in _pendentes_todas()}
+        s = pend.get(pr)
+        if not s or s["obra"] != obra:
+            raise HTTPException(409, "Esta solicitação não está mais aguardando autorização "
+                                "no Sienge (ou é de outra obra). Atualize a lista.")
+
     try:
-        sienge.solic_autorizar(corpo.purchase_request_id)
-    except sienge.SiengeError as e:
-        raise HTTPException(422, e.mensagem)
-    _PEND_CACHE["ts"] = 0.0
-    return {"ok": True}
+        ov = supa.aprov_garantir(pr, obra)
+    except supa.AuthError as e:
+        raise HTTPException(e.status, e.msg)
+    if str(ov.get("obra")) != str(obra):
+        raise HTTPException(409, "Esta solicitação está registrada em outra obra.")
+    if ov.get("status") != status_exigido:
+        raise HTTPException(409, f"A solicitação está em '{ov.get('status')}', não em "
+                            f"'{status_exigido}'. Atualize a tela.")
 
+    agora = datetime.now().astimezone().isoformat()
+    pre = "eng" if etapa == "engenharia" else "plan"
+    carimbo = {f"{pre}_por": usuario, f"{pre}_em": agora, f"{pre}_obs": obs or None}
+    if acao == "aprovada":
+        novo = {**carimbo, "status": "aguardando_planejamento"} if etapa == "engenharia" else \
+               {**carimbo, "status": "em_compras", "autorizado_sienge": True}
+    elif acao == "reprovada":
+        novo = {**carimbo, "status": "reprovada"}
+    else:  # devolvida: só estado do BOX21 (a PR segue pendente no Sienge p/ o solicitante)
+        novo = {"status": "devolvida"}
 
-@app.post("/api/aprovacao/sienge/reprovar")
-def sienge_reprovar(corpo: SolicAcao, usuario: str = Depends(usuario_logado)):
+    # 1) reserva a transição (ninguém mais age nesta etapa a partir daqui)
     try:
-        sienge.solic_reprovar(corpo.purchase_request_id, corpo.motivo or "")
-    except sienge.SiengeError as e:
-        raise HTTPException(422, e.mensagem)
-    _PEND_CACHE["ts"] = 0.0
-    return {"ok": True}
+        feito = supa.aprov_transicionar(pr, status_exigido, novo)
+    except supa.AuthError as e:
+        raise HTTPException(e.status, e.msg)
+    if not feito:
+        raise HTTPException(409, "Outra pessoa acabou de agir nesta solicitação. Atualize a tela.")
+
+    # 2) escreve no Sienge quando a ação exige; se falhar, desfaz a transição
+    toca_sienge = (acao == "aprovada" and etapa == "planejamento") or acao == "reprovada"
+    if toca_sienge and not _modo_demo():
+        try:
+            if acao == "aprovada":
+                sienge.solic_autorizar(pr)
+            else:
+                sienge.solic_reprovar(pr, obs)
+        except Exception as e:
+            desfaz = {"status": status_exigido, **{k: None for k in carimbo}}
+            if "autorizado_sienge" in novo:
+                desfaz["autorizado_sienge"] = False
+            supa.aprov_transicionar(pr, novo["status"], desfaz)
+            msg = e.mensagem if isinstance(e, sienge.SiengeError) else \
+                "O Sienge não respondeu. Nada foi alterado no BOX21; confira no Sienge e tente de novo."
+            raise HTTPException(422, msg)
+        _PEND_CACHE["ts"] = 0.0
+
+    # 3) linha do tempo
+    try:
+        supa.aprov_evento(pr, etapa, acao, usuario, obs)
+        if acao == "aprovada" and etapa == "planejamento":
+            supa.aprov_evento(pr, "compras", "autorizada_sienge", usuario,
+                              "Autorizada no Sienge — enviada para Compras")
+    except supa.AuthError:
+        pass  # o estado já mudou (e o Sienge também); o evento é complementar
+    return {"ok": True, "aprovacao": feito}
 
 
 @app.post("/api/estoque/pedidos/atualizar")
-def atualizar_pedidos(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
+def atualizar_pedidos(obra: str = Query(...), usuario: str = Depends(acesso("fornecedores", "recebimentos", "suprimentos"))):
     """(Re)coleta os pedidos de compra da obra em segundo plano (~6 min)."""
     obra_ou_erro(obra)
     if _modo_demo():
@@ -927,7 +1058,7 @@ def _posicao(prevision_id: str, nivel: str, detalhe: bool):
 
 @app.get("/api/estoque/posicao")
 def posicao(obra: str = Query(...), nivel: str = "grupo", detalhe: bool = False,
-            usuario: str = Depends(usuario_logado)):
+            usuario: str = Depends(acesso("posicao"))):
     obra_ou_erro(obra)
     if nivel not in ("grupo", "familia", "macro"):
         nivel = "grupo"
@@ -947,7 +1078,7 @@ def _coletar_grupos_bg():
 
 
 @app.post("/api/estoque/grupos/atualizar")
-def atualizar_grupos(usuario: str = Depends(usuario_logado)):
+def atualizar_grupos(usuario: str = Depends(acesso("posicao"))):
     """Dispara a coleta do mapa insumo→grupo em segundo plano (~11 min: o Sienge
     leva ~30s por página). Retorna na hora; o mapa atualiza quando terminar."""
     if _modo_demo():
@@ -959,7 +1090,7 @@ def atualizar_grupos(usuario: str = Depends(usuario_logado)):
 
 
 @app.get("/api/estoque/catalogo")
-def catalogo(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
+def catalogo(obra: str = Query(...), usuario: str = Depends(acesso("operar", "requisicao"))):
     obra_ou_erro(obra)
     est = _analise(obra)
     # catálogo = itens com grupo/macro/saldo/consumo (sem os blocos de alerta)
@@ -968,7 +1099,7 @@ def catalogo(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
 
 @app.get("/api/estoque/insumos")
 def insumos(obra: str = Query(...), q: str = "",
-            usuario: str = Depends(usuario_logado)):
+            usuario: str = Depends(acesso("estoque", "operar", "requisicao"))):
     obra_ou_erro(obra)
     est = _analise(obra)
     ql = q.lower().strip()
@@ -980,7 +1111,7 @@ def insumos(obra: str = Query(...), q: str = "",
 
 
 @app.get("/api/estoque/movimentos")
-def movimentos(obra: str = Query(...), usuario: str = Depends(usuario_logado)):
+def movimentos(obra: str = Query(...), usuario: str = Depends(acesso("historico", "requisicao"))):
     obra_ou_erro(obra)
     return {"itens": audit.historico(obra)}
 
@@ -1070,7 +1201,86 @@ def _gravar_avulso(cost_center_id, prevision_id, tipo_id, doc, hoje,
                         else "Nenhum item de orçamento apropriável para este insumo.")
 
 
-def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
+# ---- escrita segura: auditoria antes do Sienge + idempotência -----------------
+# Cada item vira uma linha de auditoria com status "pendente" ANTES do POST ao
+# Sienge; depois vira "gravado" (com o id do Sienge) ou "falhou". Se a auditoria
+# não grava, nada vai ao Sienge. O front manda um Idempotency-Key por cesta: cada
+# item ganha uma chave derivada (única no banco), então repetir a mesma cesta não
+# reenvia o que já foi gravado — e bloqueia (409) o que ficou sem confirmação.
+_CHAVE_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+
+def _chave_valida(chave: str | None) -> str | None:
+    if chave is None or chave == "":
+        return None
+    if not _CHAVE_RE.match(chave):
+        raise HTTPException(422, "Idempotency-Key inválida.")
+    return chave
+
+
+def _chaves_itens(chave: str | None, itens: list[ItemEscrita]) -> list[str | None]:
+    """Chave por item = chave da cesta + hash da assinatura do item (e da ocorrência,
+    se a mesma linha aparecer 2x). Não depende da posição na cesta."""
+    if not chave:
+        return [None] * len(itens)
+    vistos: Counter = Counter()
+    out = []
+    for i in itens:
+        sig = f"{i.resource_id}|{i.detail_id}|{i.trademark_id}|{i.quantidade}|{i.unidade}"
+        vistos[sig] += 1
+        h = hashlib.sha1(f"{sig}#{vistos[sig]}".encode()).hexdigest()[:16]
+        out.append(f"{chave}:{h}")
+    return out
+
+
+def _item_audit(i: ItemEscrita, chave: str | None) -> dict:
+    return {"resource_id": i.resource_id, "quantidade": i.quantidade, "unidade": i.unidade,
+            "descricao": i.descricao, "detail_id": i.detail_id, "trademark_id": i.trademark_id,
+            "variante": i.variante, "embalagem": i.embalagem,
+            "fator_embalagem": i.fator_embalagem, "chave_idempotencia": chave}
+
+
+def _registrar_pendente(**kw) -> list[int]:
+    """Grava a auditoria como pendente; conflito de chave = a mesma cesta já está sendo gravada."""
+    try:
+        return audit.registrar(status="pendente", sienge_status=None, sienge_movement_id=None,
+                               sienge_resposta=None, **kw)
+    except supa.AuthError as e:
+        if e.status == 409:
+            raise HTTPException(409, "Esta mesma cesta já está sendo gravada. Aguarde e confira o Histórico.")
+        raise HTTPException(e.status or 503, e.msg)
+    except Exception as e:
+        if "unique" in str(e).lower():
+            raise HTTPException(409, "Esta mesma cesta já está sendo gravada. Aguarde e confira o Histórico.")
+        raise HTTPException(503, f"Não foi possível registrar a auditoria; nada foi gravado no Sienge. ({e})")
+
+
+_MSG_SEM_CONFIRMACAO = ("O Sienge não confirmou a gravação (falha de comunicação) — ela PODE ter sido "
+                        "registrada. Confira no Sienge antes de repetir. O item ficou como "
+                        "'sem confirmação' no Histórico.")
+
+
+def _marcar_falha(ids: list[int], **kw):
+    """Registra a recusa do Sienge; se o banco falhar aqui, não esconde a mensagem do Sienge."""
+    try:
+        audit.atualizar(ids, **kw)
+    except Exception:
+        pass
+
+
+def _fechar_gravado(ids: list[int], resp: dict) -> str | None:
+    """Marca as linhas como gravadas. O Sienge JÁ gravou: se a auditoria falhar aqui,
+    não devolve erro (o usuário repetiria e duplicaria) — devolve um aviso."""
+    try:
+        audit.atualizar(ids, status="gravado", sienge_status=resp["status"],
+                        sienge_movement_id=resp["movement_id"], sienge_resposta=resp["resposta"])
+        return None
+    except Exception:
+        return ("Gravado no Sienge, mas o Histórico não foi atualizado — o registro aparece "
+                "como 'sem confirmação'. Não repita a operação.")
+
+
+def _gravar(prevision_id, operacao, corpo: Escrita, usuario, chave: str | None):
     o = obra_ou_erro(prevision_id)
     tipo_id, doc = _OP[operacao]
     hoje = date.today().isoformat()
@@ -1080,13 +1290,27 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
     if corpo.solicitante:
         notes += f" | Solic.: {corpo.solicitante}"
 
-    if _modo_demo():
-        resp = {"status": 201, "movement_id": f"DEMO-{operacao}", "resposta": {"demo": True}}
-    elif operacao == "baixa":
-        # consumo (tipo 2): não exige preço nem apropriação — um movimento com N linhas.
-        # o detailId/trademarkId é obrigatório p/ achar o saldo de itens com variação (cor).
+    # 1) idempotência: o que desta cesta já foi gravado / ficou sem confirmação?
+    chaves = _chaves_itens(chave, corpo.itens)
+    existentes = {r["chave_idempotencia"]: r for r in audit.por_chaves([c for c in chaves if c])} if chave else {}
+    if any(r.get("status") == "pendente" for r in existentes.values()):
+        raise HTTPException(409, "Uma gravação anterior desta mesma cesta ficou sem confirmação do "
+                            "Sienge. Confira no Sienge/Histórico antes de repetir.")
+    ja_ids = [existentes[c]["id"] for c in chaves if c in existentes]
+    fila = [(i, c) for i, c in zip(corpo.itens, chaves) if c not in existentes]
+    if not fila:  # tudo já tinha sido gravado (ex.: a resposta anterior se perdeu na rede)
+        return {"ok": True, "modo": "demo" if _modo_demo() else "sienge", "repetida": True,
+                "sienge": None, "auditoria_ids": ja_ids}
+
+    base = dict(usuario=usuario, obra=prevision_id, operacao=operacao, movement_type_id=tipo_id,
+                document_id=doc, movement_date=hoje, terceiro=corpo.terceiro,
+                solicitante=corpo.solicitante)
+
+    if operacao == "baixa":
+        # consumo (tipo 2): um único movimento com N linhas -> tudo ou nada
+        ids = _registrar_pendente(itens=[_item_audit(i, c) for i, c in fila], **base)
         itens_sienge = []
-        for i in corpo.itens:
+        for i, _ in fila:
             it = {"resourceId": int(i.resource_id) if str(i.resource_id).isdigit() else i.resource_id,
                   "quantity": i.quantidade, "unitOfMeasure": i.unidade or ""}
             if i.detail_id is not None:
@@ -1094,48 +1318,78 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario):
             if i.trademark_id is not None:
                 it["trademarkId"] = i.trademark_id
             itens_sienge.append(it)
-        try:
-            resp = sienge.criar_movimento(o["cost_center_id"], tipo_id, doc, hoje,
-                                          itens_sienge, notes=notes)
-        except sienge.SiengeError as e:
-            raise HTTPException(422, e.mensagem)
-    else:
-        # entrada (tipo 9): exige preço + apropriação -> um movimento por item
-        resp = {"status": 201, "movement_id": None, "resposta": {}}
-        for i in corpo.itens:
-            resp = _gravar_avulso(o["cost_center_id"], prevision_id, tipo_id, doc, hoje,
-                                  i.resource_id, i.quantidade, i.unidade or "", notes,
-                                  detail_id=i.detail_id, trademark_id=i.trademark_id)
-    # anexa ao cache em vez de re-baixar todo o histórico (saldo atualiza na hora)
-    _anexar_local(prevision_id, operacao, corpo, tipo_id)
+        if _modo_demo():
+            resp = {"status": 201, "movement_id": f"DEMO-{operacao}", "resposta": {"demo": True}}
+        else:
+            try:
+                resp = sienge.criar_movimento(o["cost_center_id"], tipo_id, doc, hoje,
+                                              itens_sienge, notes=notes)
+            except sienge.SiengeError as e:
+                _marcar_falha(ids, status="falhou", sienge_status=e.status, erro=e.mensagem[:500],
+                                liberar_chave=True)
+                raise HTTPException(422, e.mensagem)
+            except Exception:
+                raise HTTPException(502, _MSG_SEM_CONFIRMACAO)
+        aviso = _fechar_gravado(ids, resp)
+        _anexar_local(prevision_id, [i for i, _ in fila], tipo_id)
+        return {"ok": True, "modo": "demo" if _modo_demo() else "sienge", "repetida": False,
+                "sienge": resp, "auditoria_ids": ja_ids + ids, "aviso": aviso}
 
-    ids = audit.registrar(
-        usuario=usuario, obra=prevision_id, operacao=operacao,
-        movement_type_id=tipo_id, document_id=doc, movement_date=hoje,
-        sienge_status=resp["status"], sienge_movement_id=resp["movement_id"],
-        sienge_resposta=resp["resposta"],
-        itens=[{"resource_id": i.resource_id, "quantidade": i.quantidade,
-                "unidade": i.unidade, "descricao": i.descricao} for i in corpo.itens],
-        terceiro=corpo.terceiro, solicitante=corpo.solicitante,
-    )
-    return {"ok": True, "modo": "demo" if _modo_demo() else "sienge",
-            "sienge": resp, "auditoria_ids": ids}
+    # entrada (tipo 9): o Sienge exige um movimento por item -> item a item, com status
+    # próprio; se um falha, os anteriores ficam gravados e a resposta diz quantos foram.
+    gravados_ids: list[int] = []
+    gravados: list[ItemEscrita] = []
+    precos: dict = {}
+    resp = None
+    aviso = None
+    for i, c in fila:
+        ids = _registrar_pendente(itens=[_item_audit(i, c)], **base)
+        preco = round(_preco_unit(prevision_id, i.resource_id) or 0.01, 4)
+        try:
+            if _modo_demo():
+                resp = {"status": 201, "movement_id": f"DEMO-{operacao}", "resposta": {"demo": True}}
+            else:
+                resp = _gravar_avulso(o["cost_center_id"], prevision_id, tipo_id, doc, hoje,
+                                      i.resource_id, i.quantidade, i.unidade or "", notes,
+                                      detail_id=i.detail_id, trademark_id=i.trademark_id)
+        except HTTPException as e:  # recusa definitiva do Sienge
+            _marcar_falha(ids, status="falhou", sienge_status=e.status_code,
+                            erro=str(e.detail)[:500], liberar_chave=True)
+            _anexar_local(prevision_id, gravados, tipo_id, precos)
+            nome = i.descricao or f"#{i.resource_id}"
+            ja = len(ja_ids) + len(gravados)
+            raise HTTPException(422, f"{e.detail} — item '{nome}'. " + (
+                f"{ja} de {len(corpo.itens)} item(ns) já estão gravados no Sienge; "
+                "grave de novo a mesma cesta que só os que faltam serão enviados." if ja else
+                "Nada desta cesta foi gravado."))
+        except Exception:
+            _anexar_local(prevision_id, gravados, tipo_id, precos)
+            raise HTTPException(502, _MSG_SEM_CONFIRMACAO)
+        aviso = _fechar_gravado(ids, resp) or aviso
+        gravados_ids += ids
+        gravados.append(i)
+        precos[str(i.resource_id)] = preco
+    _anexar_local(prevision_id, gravados, tipo_id, precos)
+    return {"ok": True, "modo": "demo" if _modo_demo() else "sienge", "repetida": False,
+            "sienge": resp, "auditoria_ids": ja_ids + gravados_ids, "aviso": aviso}
 
 
 @app.post("/api/estoque/baixa")
 def baixa(corpo: Escrita, obra: str = Query(...),
-          usuario: str = Depends(usuario_operador)):
+          idempotency_key: str | None = Header(default=None),
+          usuario: str = Depends(operador("operar", "requisicao"))):
     if not corpo.itens:
         raise HTTPException(400, "Nenhum item informado")
-    return _gravar(obra, "baixa", corpo, usuario)
+    return _gravar(obra, "baixa", corpo, usuario, _chave_valida(idempotency_key))
 
 
 @app.post("/api/estoque/entrada")
 def entrada(corpo: Escrita, obra: str = Query(...),
-            usuario: str = Depends(usuario_operador)):
+            idempotency_key: str | None = Header(default=None),
+            usuario: str = Depends(operador("operar"))):
     if not corpo.itens:
         raise HTTPException(400, "Nenhum item informado")
-    return _gravar(obra, "entrada", corpo, usuario)
+    return _gravar(obra, "entrada", corpo, usuario, _chave_valida(idempotency_key))
 
 
 @app.post("/api/estoque/estorno")
@@ -1143,41 +1397,53 @@ def estorno(corpo: Estorno, usuario: str = Depends(usuario_admin)):
     linha = audit.por_id(corpo.auditoria_id)
     if not linha:
         raise HTTPException(404, "Registro de auditoria não encontrado")
-    if linha["estornado"]:
-        raise HTTPException(400, "Este movimento já foi estornado")
-
     prevision_id = linha["obra"]
+    _checar_acesso(usuario, prevision_id, ("historico",))
+    if linha["operacao"] == "estorno":
+        raise HTTPException(400, "Não se estorna um estorno.")
+    if (linha.get("status") or "gravado") != "gravado":
+        raise HTTPException(409, "Só dá para estornar movimentos confirmados no Sienge.")
     o = obra_ou_erro(prevision_id)
+
+    # reserva atômica: um segundo clique/aba recebe 409 em vez de gerar outro compensatório
+    if not audit.reservar_estorno(corpo.auditoria_id):
+        raise HTTPException(409, "Este movimento já foi estornado (ou está sendo estornado agora).")
+
     # estorno = movimento compensatório na direção oposta (documentId INIE = avulso)
     if linha["operacao"] == "baixa":
-        tipo_id, doc, op_oposta = 9, "INIE", "entrada"   # devolve ao saldo
+        tipo_id, doc = 9, "INIE"    # devolve ao saldo
     else:
-        tipo_id, doc, op_oposta = 10, "INIE", "baixa"     # retira do saldo
+        tipo_id, doc = 10, "INIE"   # retira do saldo
     hoje = date.today().isoformat()
-    notes = f"Via app Almoxarifado R21 (estorno de #{corpo.auditoria_id}) por {usuario}"
+    notes = f"Via app BOX21 (estorno de #{corpo.auditoria_id}) por {usuario}"
+    item = ItemEscrita(resource_id=linha["resource_id"], quantidade=linha["quantidade"],
+                       unidade=linha.get("unidade"), descricao=linha.get("descricao"),
+                       detail_id=linha.get("detail_id"), trademark_id=linha.get("trademark_id"),
+                       variante=linha.get("variante"))
+    try:
+        ids = _registrar_pendente(itens=[_item_audit(item, None)], usuario=usuario,
+                                  obra=prevision_id, operacao="estorno", movement_type_id=tipo_id,
+                                  document_id=doc, movement_date=hoje, estorno_de=corpo.auditoria_id)
+    except HTTPException:
+        audit.liberar_estorno(corpo.auditoria_id)
+        raise
 
     if _modo_demo():
-        resp = {"status": 201, "movement_id": f"DEMO-estorno", "resposta": {"demo": True}}
+        resp = {"status": 201, "movement_id": "DEMO-estorno", "resposta": {"demo": True}}
     else:
-        # estorno = entrada/saída avulsa (tipo 9/10): exige preço + apropriação 100%
-        resp = _gravar_avulso(o["cost_center_id"], prevision_id, tipo_id, doc, hoje,
-                              linha["resource_id"], linha["quantidade"],
-                              linha["unidade"] or "", notes)
+        try:
+            # a MESMA variação (cor/detalhe/marca) da baixa/entrada original
+            resp = _gravar_avulso(o["cost_center_id"], prevision_id, tipo_id, doc, hoje,
+                                  item.resource_id, item.quantidade, item.unidade or "", notes,
+                                  detail_id=item.detail_id, trademark_id=item.trademark_id)
+        except HTTPException as e:
+            _marcar_falha(ids, status="falhou", sienge_status=e.status_code, erro=str(e.detail)[:500])
+            audit.liberar_estorno(corpo.auditoria_id)
+            raise
+        except Exception:
+            raise HTTPException(502, _MSG_SEM_CONFIRMACAO)  # mantém reservado: não estornar 2x
 
-    ids = audit.registrar(
-        usuario=usuario, obra=prevision_id, operacao="estorno",
-        movement_type_id=tipo_id, document_id=doc, movement_date=hoje,
-        sienge_status=resp["status"], sienge_movement_id=resp["movement_id"],
-        sienge_resposta=resp["resposta"],
-        itens=[{"resource_id": linha["resource_id"], "quantidade": linha["quantidade"],
-                "unidade": linha["unidade"], "descricao": linha["descricao"]}],
-        estorno_de=corpo.auditoria_id,
-    )
-    audit.marcar_estornado(corpo.auditoria_id)
-    # anexa o compensatório ao cache (saldo volta na hora, sem re-baixar tudo)
-    _anexar_local(prevision_id, "estorno",
-                  Escrita(itens=[ItemEscrita(resource_id=linha["resource_id"],
-                                             quantidade=linha["quantidade"],
-                                             unidade=linha["unidade"],
-                                             descricao=linha["descricao"])]), tipo_id)
-    return {"ok": True, "auditoria_ids": ids, "sienge": resp}
+    aviso = _fechar_gravado(ids, resp)
+    preco = {str(item.resource_id): round(_preco_unit(prevision_id, item.resource_id), 4)} if tipo_id == 9 else None
+    _anexar_local(prevision_id, [item], tipo_id, preco)
+    return {"ok": True, "auditoria_ids": ids, "sienge": resp, "aviso": aviso}

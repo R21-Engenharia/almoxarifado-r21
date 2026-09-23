@@ -20,15 +20,25 @@ create table if not exists public.estoque_movimentos (
   sienge_resposta    jsonb,
   estorno_de         bigint references public.estoque_movimentos(id),
   estornado          boolean not null default false,
-  removido_no_sienge boolean not null default false
+  removido_no_sienge boolean not null default false,
+  terceiro           text,
+  solicitante        text,
+  detail_id          bigint,
+  trademark_id       bigint,
+  variante           text,
+  embalagem          text,
+  fator_embalagem    numeric,
+  chave_idempotencia text,
+  status             text not null default 'gravado',   -- pendente | gravado | falhou
+  erro               text
 );
+
+create unique index if not exists ux_estoque_mov_chave
+  on public.estoque_movimentos(chave_idempotencia) where chave_idempotencia is not null;
 
 create index if not exists idx_estoque_mov_obra
   on public.estoque_movimentos(obra, criado_em desc);
 
--- RLS: acesso controlado pela API (que usa a chave anon). Política aberta como no
--- app de validação; o gate real é a verificação de token + authorized_emails no backend.
+-- RLS ligado e SEM política: só o backend (service_role) lê/grava a auditoria.
 alter table public.estoque_movimentos enable row level security;
 drop policy if exists "app_all" on public.estoque_movimentos;
-create policy "app_all" on public.estoque_movimentos
-  for all using (true) with check (true);

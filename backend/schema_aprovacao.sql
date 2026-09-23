@@ -33,9 +33,10 @@ create table if not exists public.aprov_sienge_eventos (
 );
 create index if not exists idx_aprov_sienge_ev on public.aprov_sienge_eventos(purchase_request_id, quando);
 
+-- RLS: sem política aberta. A leitura pelo front (só leitura) e o fechamento da
+-- escrita ficam no schema_setup.sql / schema_migra_2026_09_B.sql; quem grava é o
+-- backend (service_role), que valida papel e etapa.
 alter table public.aprov_sienge enable row level security;
 drop policy if exists "aprov_sienge_all" on public.aprov_sienge;
-create policy "aprov_sienge_all" on public.aprov_sienge for all using (true) with check (true);
 alter table public.aprov_sienge_eventos enable row level security;
 drop policy if exists "aprov_sienge_ev_all" on public.aprov_sienge_eventos;
-create policy "aprov_sienge_ev_all" on public.aprov_sienge_eventos for all using (true) with check (true);

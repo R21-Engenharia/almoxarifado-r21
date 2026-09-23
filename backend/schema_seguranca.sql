@@ -28,6 +28,7 @@ as $$
   select exists (
     select 1 from public.authorized_emails ae
     where lower(ae.email) = lower(auth.jwt() ->> 'email')
+      and coalesce(ae.ativo, true)
   );
 $$;
 revoke all on function public.email_autorizado() from public;
@@ -40,7 +41,7 @@ declare
   t text;
   p record;
   operacionais text[] := array[
-    'aprov_sienge','aprov_sienge_eventos','plano_compra','plano_compra_itens',
+    'plano_compra','plano_compra_itens',
     'equipamentos','equip_movimentacoes'
   ];
 begin
@@ -60,6 +61,22 @@ begin
 end $$;
 
 -- 3) perfis: cada usuário só o PRÓPRIO perfil (id = auth.uid())
+-- aprovação: o front só LÊ; quem muda o estado é o backend (service_role), que
+-- confere papel, etapa e se a solicitação ainda está pendente no Sienge.
+do $$
+declare t text; p record;
+begin
+  foreach t in array array['aprov_sienge','aprov_sienge_eventos'] loop
+    if to_regclass('public.'||t) is null then continue; end if;
+    execute format('alter table public.%I enable row level security', t);
+    for p in select policyname from pg_policies where schemaname='public' and tablename=t loop
+      execute format('drop policy %I on public.%I', p.policyname, t);
+    end loop;
+    execute format('create policy %I on public.%I for select to authenticated using (public.email_autorizado())',
+                   t||'_leitura', t);
+  end loop;
+end $$;
+
 do $$
 declare p record;
 begin

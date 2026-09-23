@@ -184,9 +184,17 @@ export interface Movimento {
   unidade: string | null
   document_id: string | null
   sienge_movement_id: string | null
-  estornado: number
+  estornado: boolean | number
   estorno_de: number | null
+  // escrita segura: pendente = enviado ao Sienge sem confirmação; falhou = recusado
+  status?: 'pendente' | 'gravado' | 'falhou' | null
+  erro?: string | null
+  variante?: string | null
+  detail_id?: number | null
 }
+
+export type EtapaAprov = 'engenharia' | 'planejamento'
+export type AcaoAprov = 'aprovada' | 'reprovada' | 'devolvida'
 
 export type ClasseABC = 'A' | 'B' | 'C' | '—'
 
@@ -297,18 +305,24 @@ export const api = {
     req<{ solicitacoes: SolicSienge[] }>(`/api/aprovacao/pendentes?obra=${obra}`),
   itemSubetapa: (obra: string, prId: number, itemNumber: number) =>
     req<{ subetapas: ItemSubetapa[] }>(`/api/aprovacao/item-subetapa?obra=${obra}&pr_id=${prId}&item_number=${itemNumber}`),
-  siengeAutorizar: (purchase_request_id: number) =>
-    req<{ ok: boolean }>(`/api/aprovacao/sienge/autorizar`, { method: 'POST', body: JSON.stringify({ purchase_request_id }) }),
-  siengeReprovar: (purchase_request_id: number, motivo: string) =>
-    req<{ ok: boolean }>(`/api/aprovacao/sienge/reprovar`, { method: 'POST', body: JSON.stringify({ purchase_request_id, motivo }) }),
+  // dupla aprovação: o servidor confere papel, etapa e pendência no Sienge
+  aprovacaoAcao: (obra: string, purchase_request_id: number, etapa: EtapaAprov, acao: AcaoAprov, obs?: string) =>
+    req<{ ok: boolean }>(`/api/aprovacao/acao?obra=${obra}`, {
+      method: 'POST', body: JSON.stringify({ purchase_request_id, etapa, acao, obs: obs || null }),
+    }),
   movimentos: (obra: string) =>
     req<{ itens: Movimento[] }>(`/api/estoque/movimentos?obra=${obra}`),
   atualizar: (obra: string) =>
     req<{ ok: boolean; coletado_em: string | null }>(`/api/estoque/atualizar?obra=${obra}`, { method: 'POST' }),
-  baixa: (obra: string, itens: EscritaItem[], extra?: { terceiro?: string; solicitante?: string }) =>
-    req<WriteResp>(`/api/estoque/baixa?obra=${obra}`, { method: 'POST', body: JSON.stringify({ itens, ...extra }) }),
-  entrada: (obra: string, itens: EscritaItem[]) =>
-    req<WriteResp>(`/api/estoque/entrada?obra=${obra}`, { method: 'POST', body: JSON.stringify({ itens }) }),
+  // chave = Idempotency-Key da cesta: repetir a mesma cesta não regrava no Sienge
+  baixa: (obra: string, itens: EscritaItem[], chave: string, extra?: { terceiro?: string; solicitante?: string }) =>
+    req<WriteResp>(`/api/estoque/baixa?obra=${obra}`, {
+      method: 'POST', headers: { 'Idempotency-Key': chave }, body: JSON.stringify({ itens, ...extra }),
+    }),
+  entrada: (obra: string, itens: EscritaItem[], chave: string) =>
+    req<WriteResp>(`/api/estoque/entrada?obra=${obra}`, {
+      method: 'POST', headers: { 'Idempotency-Key': chave }, body: JSON.stringify({ itens }),
+    }),
   estorno: (auditoria_id: number) =>
     req<WriteResp>(`/api/estoque/estorno`, { method: 'POST', body: JSON.stringify({ auditoria_id }) }),
 }
@@ -328,7 +342,18 @@ export interface Variante {
 export interface Embalagem {
   id: string; resource_id: string; nome: string; fator: number; unidade?: string | null
 }
-export interface WriteResp { ok: boolean; modo?: string; auditoria_ids: number[] }
+export interface WriteResp {
+  ok: boolean; modo?: string; auditoria_ids: number[]
+  repetida?: boolean        // a cesta já tinha sido gravada (resposta anterior perdida)
+  aviso?: string | null     // gravado no Sienge, mas algo secundário falhou
+}
+
+// chave de idempotência de uma cesta (uma por cesta; renova quando a cesta muda)
+export function novaChave(): string {
+  const c = globalThis.crypto
+  if (c && 'randomUUID' in c) return c.randomUUID()
+  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
 
 export const STATUS_LABEL: Record<Status, string> = {
   ruptura: 'Ruptura', critico: 'Crítico', baixo: 'Baixo', ok: 'OK', parado: 'Parado',

@@ -78,7 +78,8 @@ update public.authorized_emails set gerenciar_usuarios = true
 create or replace function public.email_autorizado()
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.authorized_emails ae
-                 where lower(ae.email) = lower(auth.jwt() ->> 'email'));
+                 where lower(ae.email) = lower(auth.jwt() ->> 'email')
+                   and coalesce(ae.ativo, true));
 $$;
 revoke all on function public.email_autorizado() from public;
 grant execute on function public.email_autorizado() to authenticated;
@@ -86,8 +87,7 @@ grant execute on function public.email_autorizado() to authenticated;
 -- operacional: só usuário autorizado (derruba qualquer policy antiga using(true))
 do $$
 declare t text; p record;
-  operacionais text[] := array['aprov_sienge','aprov_sienge_eventos',
-    'plano_compra','plano_compra_itens','equipamentos','equip_movimentacoes'];
+  operacionais text[] := array['plano_compra','plano_compra_itens','equipamentos','equip_movimentacoes'];
 begin
   foreach t in array operacionais loop
     if to_regclass('public.'||t) is null then continue; end if;
@@ -96,6 +96,22 @@ begin
       execute format('drop policy %I on public.%I', p.policyname, t);
     end loop;
     execute format('create policy %I on public.%I for all to authenticated using (public.email_autorizado()) with check (public.email_autorizado())', t||'_autorizados', t);
+  end loop;
+end $$;
+
+-- aprovação: o front só LÊ; quem muda o estado é o backend (service_role), que
+-- confere papel, etapa e se a solicitação ainda está pendente no Sienge.
+do $$
+declare t text; p record;
+begin
+  foreach t in array array['aprov_sienge','aprov_sienge_eventos'] loop
+    if to_regclass('public.'||t) is null then continue; end if;
+    execute format('alter table public.%I enable row level security', t);
+    for p in select policyname from pg_policies where schemaname='public' and tablename=t loop
+      execute format('drop policy %I on public.%I', p.policyname, t);
+    end loop;
+    execute format('create policy %I on public.%I for select to authenticated using (public.email_autorizado())',
+                   t||'_leitura', t);
   end loop;
 end $$;
 

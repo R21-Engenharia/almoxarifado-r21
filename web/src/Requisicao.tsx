@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, num, familiaCurta, type Item, type Embalagem } from './api'
+import { api, num, familiaCurta, novaChave, type Item, type Embalagem } from './api'
 import { AddInsumoModal, linhaParaEscrita, resumoLinha, type CestaLinha } from './AddInsumo'
 import Loader from './Loader'
 
@@ -22,6 +22,12 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
   const [recentes, setRecentes] = useState<string[]>([])
   const [confirmar, setConfirmar] = useState(false)
   const [gravando, setGravando] = useState(false)
+  const [erroGravar, setErroGravar] = useState('')
+  // chave de idempotência da requisição: repetir a mesma (ex.: após falha de rede) não
+  // dá baixa duas vezes. Vale enquanto a cesta existir; renova ao esvaziar ou mudar de obra.
+  const [chave, setChave] = useState<string | null>(null)
+  useEffect(() => { if (cesta.length === 0) setChave(null) }, [cesta])
+  useEffect(() => { setChave(null) }, [obra])
   const [msg, setMsg] = useState('')
   const [ficha, setFicha] = useState<Ficha | null>(null)
 
@@ -51,9 +57,11 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
   const excede = cesta.some(l => l.baseQtd > l.saldoVariante + 1e-6)
 
   const gravar = async () => {
-    setGravando(true)
+    const k = chave ?? novaChave()
+    setChave(k); setErroGravar(''); setGravando(true)
     try {
-      const r = await api.baixa(obra, cesta.map(linhaParaEscrita), { terceiro: terceiro.trim(), solicitante: solicitante.trim() || undefined })
+      const r = await api.baixa(obra, cesta.map(linhaParaEscrita), k, { terceiro: terceiro.trim(), solicitante: solicitante.trim() || undefined })
+      if (r.aviso) setMsg('⚠ ' + r.aviso)
       setFicha({
         numero: `REQ-${(r.auditoria_ids[0] ?? Date.now()).toString().padStart(5, '0')}`,
         terceiro: terceiro.trim(), solicitante: solicitante.trim(), obraNome,
@@ -65,7 +73,7 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
         })),
       })
       setCesta([]); setConfirmar(false); carregar()
-    } catch (e) { setMsg('✗ ' + (e instanceof Error ? e.message : String(e))); setConfirmar(false) }
+    } catch (e) { setErroGravar(e instanceof Error ? e.message : String(e)) }
     finally { setGravando(false) }
   }
 
@@ -124,7 +132,7 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
       {cesta.length > 0 && (
         <div className="cesta-bar">
           <div className="cesta-info">{cesta.length} item(ns) na requisição{excede && <span style={{ color: 'var(--ruptura)' }}> · qtd acima do saldo</span>}</div>
-          <button className="cta" disabled={!terceiro.trim()} onClick={() => setConfirmar(true)}>
+          <button className="cta" disabled={!terceiro.trim()} onClick={() => { setErroGravar(''); setConfirmar(true) }}>
             {terceiro.trim() ? 'Gerar requisição' : 'Informe o terceiro'}</button>
         </div>
       )}
@@ -142,9 +150,10 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
                 </li>
               ))}
             </ul>
+            {erroGravar && <div className="msg bad">{erroGravar}</div>}
             <div className="modal-acts">
               <button className="ghost" onClick={() => setConfirmar(false)} disabled={gravando}>Cancelar</button>
-              <button className="cta" onClick={gravar} disabled={gravando}>{gravando ? 'Gravando…' : 'Confirmar e dar baixa'}</button>
+              <button className="cta" onClick={gravar} disabled={gravando}>{gravando ? 'Gravando…' : erroGravar ? 'Tentar de novo' : 'Confirmar e dar baixa'}</button>
             </div>
           </div>
         </div>
