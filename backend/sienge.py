@@ -72,6 +72,24 @@ def _base_bulk() -> str:
     return f"https://api.sienge.com.br/{sub}/public/api/bulk-data/v1"
 
 
+def _paginar(path: str, params: dict | None = None) -> list[dict]:
+    """GET paginado (limit 200) com retry em 429 — todas as coletas passam por aqui,
+    então um limite de taxa no meio não derruba a coleta inteira."""
+    params = {**(params or {}), "limit": LIMIT, "offset": 0}
+    out: list[dict] = []
+    while True:
+        r = _call("GET", path, params=params)
+        r.raise_for_status()
+        data = r.json()
+        res = data.get("results", []) or []
+        out.extend(res)
+        total = (data.get("resultSetMetadata") or {}).get("count", len(out))
+        params["offset"] += LIMIT
+        if params["offset"] >= total or not res:
+            break
+    return out
+
+
 def coletar_orcamento_wbs(building_id: int) -> dict:
     """Mapa das subetapas (WBS) do orçamento da obra, POR UNIDADE CONSTRUTIVA (sheet):
     {"ucs": {sheetId: nome}, "wbs": {sheetId: {wbsCode: {descricao, unidade, qtd_orcada, medido}}}}.
@@ -119,47 +137,31 @@ def coletar_orcamento_wbs(building_id: int) -> dict:
 
 def coletar_movimentos(building_id: int, start_date: str | None = None,
                        end_date: str | None = None) -> list[dict]:
-    """Puxa TODO o histórico de inventory-movements da obra (paginado)."""
-    url = f"{_base_v1()}/inventory-movements"
-    params = {"buildingId": building_id, "limit": LIMIT, "offset": 0}
+    """Histórico de inventory-movements da obra (paginado). Com start_date, só a partir
+    dessa data (coleta incremental). ATENÇÃO: o Sienge ignora startDate se endDate não
+    vier junto (validado na Holmes) — por isso o endDate padrão bem no futuro."""
+    params: dict = {"buildingId": building_id}
     if start_date:
         params["startDate"] = start_date
-    if end_date:
+        params["endDate"] = end_date or "2099-12-31"
+    elif end_date:
         params["endDate"] = end_date
-    out: list[dict] = []
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        while True:
-            r = c.get(url, params=params)
-            r.raise_for_status()
-            data = r.json()
-            results = data.get("results", [])
-            out.extend(results)
-            meta = data.get("resultSetMetadata", {}) or {}
-            total = meta.get("count", len(out))
-            params["offset"] += LIMIT
-            if params["offset"] >= total or not results:
-                break
-    return out
+    return _paginar("/inventory-movements", params)
 
 
 def coletar_pedidos(building_id: int) -> list[dict]:
-    """Puxa os cabeçalhos de purchase-orders da obra (paginado). Campos:
+    """Cabeçalhos de purchase-orders da obra (paginado). Campos:
     supplierId, date, totalAmount, deliveryLate, status, authorized, etc."""
-    url = f"{_base_v1()}/purchase-orders"
-    params = {"buildingId": building_id, "limit": LIMIT, "offset": 0}
+    return _paginar("/purchase-orders", {"buildingId": building_id})
+
+
+def pedidos_abertos(building_id: int) -> list[dict]:
+    """Pedidos AUTORIZADOS ainda não totalmente entregues (PENDING / PARTIALLY_DELIVERED),
+    lidos ao vivo — base do "a caminho" (material comprado e não recebido)."""
     out: list[dict] = []
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        while True:
-            r = c.get(url, params=params)
-            r.raise_for_status()
-            data = r.json()
-            results = data.get("results", [])
-            out.extend(results)
-            total = (data.get("resultSetMetadata") or {}).get("count", len(out))
-            params["offset"] += LIMIT
-            if params["offset"] >= total or not results:
-                break
-    return out
+    for st in ("PENDING", "PARTIALLY_DELIVERED"):
+        out += _paginar("/purchase-orders", {"buildingId": building_id, "status": st})
+    return [p for p in out if p.get("authorized") and not p.get("disapproved")]
 
 
 def solic_pendentes() -> list[dict]:
@@ -187,12 +189,12 @@ def solic_header(pr_id: int) -> dict:
 
 
 def pedido_itens(pedido_id: int) -> list[dict]:
-    """Itens de um pedido de compra (purchase-order): insumo, qtd, unidade, preço."""
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        r = c.get(f"{_base_v1()}/purchase-orders/{pedido_id}/items")
-        if r.status_code != 200:
-            return []
-        return r.json().get("results", []) or []
+    """Itens de um pedido de compra (purchase-order): insumo, detalhe, qtd (na unidade
+    de COMPRA), unidade, preço. Não traz quantidade entregue."""
+    r = _call("GET", f"/purchase-orders/{pedido_id}/items")
+    if r.status_code != 200:
+        return []
+    return r.json().get("results", []) or []
 
 
 def solic_item_apropriacao(pr_id: int, item_number: int) -> list[dict]:
@@ -280,19 +282,7 @@ def resource_variacoes(resource_id) -> dict:
 def estoque_inventario(cost_center_id: int) -> list[dict]:
     """GET /stock-inventories/{cc}/items — saldo atual por (resourceId, detailId,
     trademarkId). Base do seletor de cor/variação na baixa/entrada."""
-    itens, off = [], 0
-    with httpx.Client(timeout=TIMEOUT, auth=_auth()) as c:
-        while True:
-            r = c.get(f"{_base_v1()}/stock-inventories/{cost_center_id}/items",
-                      params={"limit": 200, "offset": off})
-            r.raise_for_status()
-            js = r.json()
-            res = js.get("results", []) or []
-            itens += res
-            off += 200
-            if off >= (js.get("resultSetMetadata", {}).get("count", 0)) or not res:
-                break
-    return itens
+    return _paginar(f"/stock-inventories/{cost_center_id}/items")
 
 
 def criar_movimento(cost_center_id: int, movement_type_id: int, document_id: str,

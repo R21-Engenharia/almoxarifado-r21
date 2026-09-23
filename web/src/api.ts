@@ -44,6 +44,8 @@ export interface SolicSiengeItem {
   variantes?: VarianteSaldo[]
   // outros detalhes do MESMO insumo com estoque > 0 (exceto o solicitado) — informativo
   outros_detalhes?: VarianteSaldo[]
+  // comprado e ainda não recebido (pedidos em aberto) — informativo, fora da fórmula
+  a_caminho?: number; a_caminho_estimado?: boolean; a_caminho_pedidos?: string[]
 }
 export interface SolicSienge {
   purchase_request_id: number; obra: string
@@ -84,6 +86,7 @@ export interface RecebimentosData {
 export interface SupItem {
   resource_id: string; descricao: string; unidade: string; macro: string
   saldo: number; consumo_dia: number; custo_unit: number; cobertura_dias: number; data_ruptura: string | null
+  a_caminho: number; posicao: number   // comprado e não recebido; posição = saldo + a caminho
   fornecedor: string | null; lead_dias: number; pct_no_prazo: number
   ss_dias: number; protecao_dias: number; rop_qtd: number
   dias_ate_pedir: number; data_limite: string
@@ -97,8 +100,11 @@ export interface SuprimentosData {
   kpis: {
     n_comprar_agora: number; valor_comprar_agora: number; n_esta_semana: number; valor_esta_semana: number
     n_itens: number; valor_total_sugerido: number; economia_selic_mes: number; exposicao_parada_dia: number
+    n_com_a_caminho?: number
   }
   itens: SupItem[]
+  // pedidos em aberto lidos ao vivo do Sienge (base do "a caminho")
+  a_caminho?: { atualizado_em: string | null; erro: string | null; n_pedidos: number; n_sem_conversao: number }
 }
 
 export interface FornecedorItem {

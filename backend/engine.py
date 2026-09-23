@@ -8,7 +8,7 @@ A IA nunca calcula nada disto. Espelha as fórmulas do handoff (arquivo 02).
 """
 from __future__ import annotations
 from datetime import date, datetime, timedelta
-from collections import defaultdict
+from collections import defaultdict, Counter
 from taxonomia import grupo_de, macro_de
 
 # limiares
@@ -513,9 +513,116 @@ def recebimentos(pedidos: list[dict], movimentos: list[dict],
     }
 
 
+def _chave_und(u) -> str:
+    return (u or "").strip().lower()
+
+
+def fatores_unidade(movimentos: list[dict]) -> dict[tuple[str, str], float]:
+    """(unidade de compra, unidade base) -> fator, aprendido das COMPRAS já registradas:
+    movementQuantity (base) / originalQuantity (unidade do movimento). Ex.: 6m->m = 6,
+    pct100->un = 100, t->kg = 1000. Só entra fator consistente (mediana)."""
+    obs: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for m in movimentos:
+        if (m.get("inputOutput") or "").upper() != "INPUT":
+            continue
+        u = _chave_und(m.get("unitOfMeasureSymbol"))
+        b = _chave_und(m.get("baseUnitOfMeasureSymbol"))
+        oq = float(m.get("originalQuantity") or 0)
+        if u and b and u != b and oq > 0:
+            obs[(u, b)].append(float(m.get("movementQuantity") or 0) / oq)
+    return {k: _mediana(v) for k, v in obs.items() if v}
+
+
+def em_transito(abertos: list[dict], movimentos: list[dict]) -> dict:
+    """Material COMPRADO e ainda NÃO RECEBIDO, por (insumo, detalhe), na unidade BASE.
+
+    abertos: [{"pedido": cabeçalho, "itens": [itens do pedido]}] — pedidos autorizados
+    PENDING/PARTIALLY_DELIVERED. O Sienge não informa quanto de cada item já chegou, então:
+      - PENDING: nada entregue -> tudo a caminho;
+      - PARTIALLY_DELIVERED: desconta as entradas tipo Compra do MESMO fornecedor +
+        insumo (+ detalhe) desde a data do pedido, alocadas do pedido mais antigo p/ o
+        mais novo (FIFO) -> estimativa (marcada como tal).
+    O pedido vem na unidade de COMPRA (6m, pct100...): converte pelo fator aprendido
+    das compras; sem fator conhecido o item NÃO é somado (vai em `sem_conversao`)."""
+    fatores = fatores_unidade(movimentos)
+    base_und: dict[str, Counter] = defaultdict(Counter)
+    compras: dict[tuple, list] = defaultdict(list)   # (fornecedor, rid, detalhe) -> [(data, qtd)]
+    for m in movimentos:
+        rid = str(m.get("resourceId"))
+        b = _chave_und(m.get("baseUnitOfMeasureSymbol"))
+        if b:
+            base_und[rid][b] += 1
+        if (m.get("inputOutput") or "").upper() == "INPUT" and (m.get("movementTypeDescription") or "") == "Compra":
+            dt = _parse_data(m.get("movementDate"))
+            if dt:
+                compras[(str(m.get("supplierId") or ""), rid, m.get("detailId"))].append(
+                    (dt, float(m.get("movementQuantity") or 0)))
+
+    linhas = []   # uma por item de pedido aberto
+    sem_conversao = []
+    for ab in abertos:
+        p = ab["pedido"]
+        dt = _parse_data(p.get("date"))
+        parcial = (p.get("status") or "").upper() == "PARTIALLY_DELIVERED"
+        for it in ab.get("itens") or []:
+            rid = str(it.get("resourceId"))
+            u = _chave_und(it.get("unitOfMeasure"))
+            b = base_und[rid].most_common(1)[0][0] if base_und[rid] else u
+            fator = 1.0 if (u == b or not u) else fatores.get((u, b))
+            q = float(it.get("quantity") or 0)
+            info = {"pedido_id": p.get("id"), "numero": p.get("formattedPurchaseOrderId") or str(p.get("id")),
+                    "data": dt.isoformat() if dt else None, "fornecedor_id": str(p.get("supplierId") or ""),
+                    "resource_id": rid, "detail_id": it.get("detailId"),
+                    "detalhe": (it.get("detailDescription") or "").strip(),
+                    "descricao": (it.get("resourceDescription") or "").strip(),
+                    "qtd_pedida": q, "unidade_compra": it.get("unitOfMeasure") or "", "unidade": b,
+                    "parcial": parcial}
+            if fator is None:
+                sem_conversao.append(info)
+                continue
+            info["qtd_base"] = q * fator
+            linhas.append(info)
+
+    # FIFO das entregas nos pedidos PARCIALMENTE entregues
+    parciais = sorted((l for l in linhas if l["parcial"]), key=lambda l: l["data"] or "")
+    usado: dict[tuple, float] = defaultdict(float)
+    for l in parciais:
+        chave = (l["fornecedor_id"], l["resource_id"], l["detail_id"])
+        desde = _parse_data(l["data"])
+        entregue = sum(q for d, q in compras.get(chave, []) if not desde or d >= desde) - usado[chave]
+        aloca = max(0.0, min(l["qtd_base"], entregue))
+        usado[chave] += aloca
+        l["qtd_base"] -= aloca
+
+    por_chave: dict[tuple, dict] = {}
+    for l in linhas:
+        if l["qtd_base"] <= 1e-9:
+            continue
+        k = (l["resource_id"], l["detail_id"])
+        a = por_chave.setdefault(k, {"resource_id": l["resource_id"], "detail_id": l["detail_id"],
+                                     "detalhe": l["detalhe"], "qtd": 0.0, "unidade": l["unidade"],
+                                     "estimado": False, "pedidos": []})
+        a["qtd"] += l["qtd_base"]
+        a["estimado"] = a["estimado"] or l["parcial"]
+        a["pedidos"].append({"numero": l["numero"], "data": l["data"], "qtd": round(l["qtd_base"], 3),
+                             "parcial": l["parcial"]})
+    for a in por_chave.values():
+        a["qtd"] = round(a["qtd"], 3)
+    return {"por_chave": por_chave, "sem_conversao": sem_conversao}
+
+
+def transito_por_insumo(transito: dict) -> dict[str, float]:
+    """Soma o 'a caminho' de todos os detalhes do insumo (o MRP trabalha por insumo)."""
+    out: dict[str, float] = defaultdict(float)
+    for (rid, _), a in (transito or {}).get("por_chave", {}).items():
+        out[rid] += a["qtd"]
+    return dict(out)
+
+
 def suprimentos(itens: list[dict], lead_fornecedores: list[dict],
                 scorecard: list[dict], hoje: date | None = None,
-                cobertura_alvo: int = 45, lead_padrao: int = 10) -> dict:
+                cobertura_alvo: int = 45, lead_padrao: int = 10,
+                a_caminho: dict[str, float] | None = None) -> dict:
     """MRP preditivo: para cada insumo ATIVO, calcula o ponto de pedido com o
     lead time REAL do fornecedor e um estoque de segurança que cresce com a
     falta de confiabilidade do fornecedor. Sai a lista 'comprar até o dia X,
@@ -525,6 +632,9 @@ def suprimentos(itens: list[dict], lead_fornecedores: list[dict],
       - itens: saída de analisar() (saldo, consumo_dia, custo_unit, cobertura, ruptura, fornecedores)
       - lead_fornecedores: de recebimentos() (lead mediano pedido->entrega por fornecedor)
       - scorecard: de fornecedores() (% no prazo por fornecedor)
+      - a_caminho: insumo -> qtd comprada e não recebida (em_transito). O ponto de
+        pedido e a quantidade usam a POSIÇÃO = físico + a caminho (não recomprar o que
+        já foi pedido); a data de ruptura segue pelo físico (a entrega pode atrasar).
     """
     hoje = hoje or date.today()
     lead_map = {l["fornecedor"]: l["lead_mediano"] for l in lead_fornecedores}
@@ -542,6 +652,9 @@ def suprimentos(itens: list[dict], lead_fornecedores: list[dict],
         if cd <= 0 or cobertura is None:
             continue  # sem consumo recente -> não entra no MRP (é capital parado, outro módulo)
         saldo = it.get("saldo") or 0
+        transito = (a_caminho or {}).get(it["resource_id"], 0.0)
+        posicao = saldo + transito
+        cobertura_pos = posicao / cd
         custo = it.get("custo_unit") or 0
         forns = it.get("fornecedores") or []
         # fornecedor de referência: o que tem lead conhecido; senão o primeiro
@@ -552,10 +665,10 @@ def suprimentos(itens: list[dict], lead_fornecedores: list[dict],
         # estoque de segurança (em dias): cresce com o lead e com o histórico de atraso
         ss_dias = max(2, round(lead * (0.25 + pct_atraso / 100)))
         protecao = lead + ss_dias                      # dias que o estoque precisa cobrir
-        dias_ate_pedir = round(cobertura - protecao, 1)  # <=0 => já passou do ponto
+        dias_ate_pedir = round(cobertura_pos - protecao, 1)  # <=0 => já passou do ponto
         limite = (hoje + timedelta(days=int(dias_ate_pedir))).isoformat()
         rop_qtd = round(cd * protecao, 2)              # ponto de pedido (quantidade)
-        qtd_sugerida = max(0.0, round(cd * (protecao + cobertura_alvo) - saldo, 2))
+        qtd_sugerida = max(0.0, round(cd * (protecao + cobertura_alvo) - posicao, 2))
         valor_sugerido = round(qtd_sugerida * custo, 2)
         custo_antecipar_dia = round(valor_sugerido * selic_dia, 2)  # R$/dia preso se comprar cedo
         exposicao_parada_dia = it.get("impacto_dia") or 0          # R$/dia em risco se parar
@@ -572,7 +685,8 @@ def suprimentos(itens: list[dict], lead_fornecedores: list[dict],
         lista.append({
             "resource_id": it["resource_id"], "descricao": it["descricao"],
             "unidade": it.get("unidade", ""), "macro": it.get("macro", ""),
-            "saldo": saldo, "consumo_dia": round(cd, 3), "custo_unit": round(custo, 4),
+            "saldo": saldo, "a_caminho": round(transito, 3), "posicao": round(posicao, 3),
+            "consumo_dia": round(cd, 3), "custo_unit": round(custo, 4),
             "cobertura_dias": cobertura, "data_ruptura": it.get("data_ruptura"),
             "fornecedor": forn, "lead_dias": round(lead, 1), "pct_no_prazo": round(pct_prazo, 1),
             "ss_dias": ss_dias, "protecao_dias": protecao,
@@ -599,6 +713,7 @@ def suprimentos(itens: list[dict], lead_fornecedores: list[dict],
             "n_itens": len(lista), "valor_total_sugerido": valor_total,
             "economia_selic_mes": economia_mes,
             "exposicao_parada_dia": round(sum(x["exposicao_parada_dia"] for x in agora), 2),
+            "n_com_a_caminho": sum(1 for x in lista if x["a_caminho"] > 0),
         },
         "itens": lista[:250],
     }

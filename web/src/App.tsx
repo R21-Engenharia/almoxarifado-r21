@@ -316,7 +316,7 @@ function Painel({ obra }: { obra: string }) {
           <button className={aba === 'abc' ? 'on' : ''} onClick={() => setAba('abc')}>Curva ABC</button>
         </div>
         <button className="mini" onClick={atualizar} disabled={atualizando}>
-          {atualizando ? 'Atualizando do Sienge… (~1 min)' : '↻ Atualizar do Sienge'}
+          {atualizando ? 'Atualizando do Sienge…' : '↻ Atualizar do Sienge'}
         </button>
       </div>
       {aba === 'abc' && (

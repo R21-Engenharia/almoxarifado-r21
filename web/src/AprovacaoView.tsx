@@ -277,6 +277,13 @@ function ItemCard({ c }: { c: ItemCtx }) {
           </div>
         </div>
       )}
+      {(item.a_caminho ?? 0) > 0 && (
+        <div className="meta a-caminho" title="Pedidos de compra já autorizados no Sienge e ainda não recebidos. Informativo: não entra no estoque projetado.">
+          <b>A caminho:</b> {num(item.a_caminho!, 2)} {uni} em pedido(s) já feito(s)
+          {item.a_caminho_pedidos?.length ? ` (nº ${item.a_caminho_pedidos.join(', ')})` : ''}
+          {item.a_caminho_estimado ? ' · estimado (pedido parcialmente entregue)' : ''}
+        </div>
+      )}
       {outros.length > 0 && (
         <div className="outros">
           <div className="outros-lbl">Outros detalhes disponíveis

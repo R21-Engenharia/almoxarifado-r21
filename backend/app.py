@@ -197,23 +197,58 @@ def snapshot_info(prevision_id: str) -> str | None:
         return None
 
 
-def _movimentos(prevision_id: str, force: bool = False) -> list[dict]:
+# uma trava por (tipo, obra): duas requisições (ou o warm-up + um acesso) não disparam
+# a mesma coleta pesada ao mesmo tempo — a segunda espera e usa o resultado da primeira.
+import threading
+_TRAVAS: dict[str, threading.Lock] = {}
+_TRAVAS_GUARDA = threading.Lock()
+
+
+def _trava(nome: str) -> threading.Lock:
+    with _TRAVAS_GUARDA:
+        return _TRAVAS.setdefault(nome, threading.Lock())
+
+
+_JANELA_INCREMENTAL = 7  # dias de sobreposição (pega lançamento retroativo recente)
+
+
+def _data_mov(m: dict) -> str:
+    return str(m.get("movementDate") or "")[:10]
+
+
+def _movimentos(prevision_id: str, force: bool = False, completa: bool = False) -> list[dict]:
+    """Histórico de movimentos da obra (cache em memória + snapshot em disco).
+    force=True re-coleta: INCREMENTAL por padrão (só os últimos dias, trocando essa
+    janela inteira — validado idêntico à coleta completa), ou completa=True.
+    Deleções antigas no Sienge só entram na coleta completa (a do boot diário)."""
     if not force and prevision_id in _MOVS_CACHE:
         return _MOVS_CACHE[prevision_id]
-    if _modo_demo():
-        _MOVS_CACHE[prevision_id] = demo_data.coletar_movimentos_demo(prevision_id)
+    with _trava(f"movs:{prevision_id}"):
+        if not force and prevision_id in _MOVS_CACHE:
+            return _MOVS_CACHE[prevision_id]  # outra thread acabou de carregar
+        if _modo_demo():
+            _MOVS_CACHE[prevision_id] = demo_data.coletar_movimentos_demo(prevision_id)
+            return _MOVS_CACHE[prevision_id]
+        if not force:
+            snap = _carregar_snapshot(prevision_id)
+            if snap is not None:
+                _MOVS_CACHE[prevision_id] = snap
+                return snap
+        o = obra_ou_erro(prevision_id)
+        atual = [m for m in _MOVS_CACHE.get(prevision_id, [])
+                 if not str(m.get("id", "")).startswith("local-")]  # anexos locais saem: vêm os reais
+        datas = [d for d in (_data_mov(m) for m in atual) if d]
+        if force and not completa and datas:
+            from datetime import timedelta as _td
+            ini = (date.fromisoformat(max(datas)) - _td(days=_JANELA_INCREMENTAL)).isoformat()
+            novos = sienge.coletar_movimentos(o["building_id"], start_date=ini)
+            _MOVS_CACHE[prevision_id] = [m for m in atual if _data_mov(m) < ini] + novos
+        else:
+            # completa (lenta): sem cache/snapshot, ou pedida explicitamente
+            _MOVS_CACHE[prevision_id] = sienge.coletar_movimentos(o["building_id"])
+        _salvar_snapshot(prevision_id)
+        _invalidar_obra(prevision_id)
         return _MOVS_CACHE[prevision_id]
-    if not force:
-        snap = _carregar_snapshot(prevision_id)
-        if snap is not None:
-            _MOVS_CACHE[prevision_id] = snap
-            return snap
-    # baixada completa do Sienge (lenta) — só quando não há snapshot ou force=True
-    o = obra_ou_erro(prevision_id)
-    _MOVS_CACHE[prevision_id] = sienge.coletar_movimentos(o["building_id"])
-    _salvar_snapshot(prevision_id)
-    _invalidar_obra(prevision_id)
-    return _MOVS_CACHE[prevision_id]
 
 
 def _enriquecer_classificacao(itens: list[dict]):
@@ -247,15 +282,14 @@ def _anexar_local(prevision_id: str, itens: list, tipo_id: int, precos: dict | N
     `precos` (resource_id -> preço) = preço usado na entrada, p/ não diluir o custo médio."""
     if not itens:
         return
-    if prevision_id not in _MOVS_CACHE:
-        _movimentos(prevision_id)
-    movs = _MOVS_CACHE[prevision_id]
+    _movimentos(prevision_id)
     io = "OUTPUT" if tipo_id in (2, 10) else "INPUT"
     tipo_desc = "Consumo" if tipo_id == 2 else (
         "Inicialização - Entrada Avulsa" if tipo_id == 9 else "Inicialização - Saída Avulsa")
-    for i in itens:
-        movs.append({
-            "id": f"local-{len(movs)}", "resourceId": i.resource_id,
+    novos = []
+    for n, i in enumerate(itens):
+        novos.append({
+            "id": f"local-{date.today().isoformat()}-{id(i)}-{n}", "resourceId": i.resource_id,
             "resourceDescription": i.descricao or "", "inputOutput": io,
             "movementTypeId": tipo_id, "movementTypeDescription": tipo_desc,
             "movementQuantity": i.quantidade,
@@ -265,6 +299,9 @@ def _anexar_local(prevision_id: str, itens: list, tipo_id: int, precos: dict | N
             "baseUnitOfMeasureSymbol": i.unidade or "", "unitOfMeasureSymbol": i.unidade or "",
             "supplierName": None,
         })
+    # cópia-na-escrita: quem está lendo a lista antiga (motor rodando) não é afetado
+    with _trava(f"movs:{prevision_id}"):
+        _MOVS_CACHE[prevision_id] = _MOVS_CACHE.get(prevision_id, []) + novos
     _salvar_snapshot(prevision_id)
     _invalidar_obra(prevision_id)
 
@@ -296,6 +333,7 @@ def _aquecer_cache():
             _movimentos(obra)   # 1x: carrega snapshot do disco ou baixa do Sienge (lento)
             _analise(obra)      # aquece o motor de análise
             _estoque_inv(obra)  # aquece o inventário (usado na autorização de compra)
+            _em_transito(obra)  # pedidos em aberto (MRP e autorização)
         except Exception:
             pass                # nunca derruba o boot por causa do aquecimento
 
@@ -309,11 +347,13 @@ def _on_startup():
 
 
 @app.post("/api/estoque/atualizar")
-def atualizar(obra: str = Query(...), usuario: str = Depends(acesso("estoque"))):
-    """Re-baixa o histórico completo do Sienge (lento). Use quando quiser puxar
-    movimentos feitos por fora do app."""
+def atualizar(obra: str = Query(...), completa: bool = False,
+              usuario: str = Depends(acesso("estoque"))):
+    """Puxa do Sienge os movimentos feitos por fora do app. Incremental (segundos);
+    completa=true re-baixa todo o histórico (lento, ~1 min)."""
     obra_ou_erro(obra)
-    _movimentos(obra, force=True)
+    _movimentos(obra, force=True, completa=completa)
+    _TRANSITO_CACHE.pop(obra, None)
     return {"ok": True, "coletado_em": snapshot_info(obra)}
 
 
@@ -467,10 +507,13 @@ _ENGINE_CACHE: dict = {}
 
 
 def _memo(obra: str, tag: str, fn):
-    key = (obra, f"{tag}:{date.today().isoformat()}")
+    hoje = date.today().isoformat()
+    key = (obra, f"{tag}:{hoje}")
     if key in _ENGINE_CACHE:
         return _ENGINE_CACHE[key]
     r = fn()
+    for k in [k for k in list(_ENGINE_CACHE) if not k[1].endswith(hoje)]:
+        _ENGINE_CACHE.pop(k, None)  # resultados de dias anteriores
     _ENGINE_CACHE[key] = r
     return r
 
@@ -493,9 +536,13 @@ def _estoque_inv(obra: str, force: bool = False) -> list[dict]:
         return c[1]
     if _modo_demo():
         return []
-    rows = sienge.estoque_inventario(OBRAS[obra]["cost_center_id"])
-    _ESTOQUE_INV_CACHE[obra] = (hoje, rows)
-    return rows
+    with _trava(f"inv:{obra}"):
+        c = _ESTOQUE_INV_CACHE.get(obra)
+        if not force and c and c[0] == hoje:
+            return c[1]
+        rows = sienge.estoque_inventario(OBRAS[obra]["cost_center_id"])
+        _ESTOQUE_INV_CACHE[obra] = (hoje, rows)
+        return rows
 
 
 @app.get("/api/estoque/insumo-variantes")
@@ -616,7 +663,10 @@ def _pedidos(prevision_id: str, force: bool = False) -> list[dict]:
         _PEDIDOS_CACHE[prevision_id] = []
         return []
     o = obra_ou_erro(prevision_id)
-    _PEDIDOS_CACHE[prevision_id] = sienge.coletar_pedidos(o["building_id"])
+    with _trava(f"pedidos:{prevision_id}"):
+        if not force and prevision_id in _PEDIDOS_CACHE:
+            return _PEDIDOS_CACHE[prevision_id]
+        _PEDIDOS_CACHE[prevision_id] = sienge.coletar_pedidos(o["building_id"])
     _invalidar_obra(prevision_id)   # fornecedores/recebimentos/suprimentos dependem dos pedidos
     try:
         os.makedirs(_DATA_DIR, exist_ok=True)
@@ -674,20 +724,64 @@ def pedido_itens(obra: str = Query(...), pedido_id: int = Query(...),
     return {"itens": out}
 
 
+# ---- "a caminho": material comprado e não recebido ------------------------------
+# Lido AO VIVO dos pedidos em aberto do Sienge (não do arquivo de pedidos congelado),
+# com cache curto. ~20-30 pedidos por obra, ~0,6 s cada na primeira leitura.
+_TRANSITO_TTL = 15 * 60
+_TRANSITO_CACHE: dict[str, dict] = {}   # obra -> {"ts", "dados", "erro"}
+
+
+def _em_transito(obra: str) -> dict:
+    """{"por_chave": {(rid, detail_id): {...}}, "sem_conversao": [...], "ts", "erro"}.
+    Se o Sienge falhar, devolve vazio com `erro` (o MRP segue só com o físico)."""
+    vazio = {"por_chave": {}, "sem_conversao": [], "ts": None, "erro": None}
+    if _modo_demo():
+        return vazio
+    c = _TRANSITO_CACHE.get(obra)
+    if c and _time.time() - c["ts"] < _TRANSITO_TTL:
+        return c
+    with _trava(f"transito:{obra}"):
+        c = _TRANSITO_CACHE.get(obra)
+        if c and _time.time() - c["ts"] < _TRANSITO_TTL:
+            return c
+        o = obra_ou_erro(obra)
+        try:
+            abertos = [{"pedido": p, "itens": sienge.pedido_itens(p["id"])}
+                       for p in sienge.pedidos_abertos(o["building_id"])]
+            dados = engine.em_transito(abertos, _movimentos(obra))
+            c = {**dados, "ts": _time.time(), "erro": None, "n_pedidos": len(abertos)}
+        except Exception as e:  # sem trânsito é melhor que sem MRP
+            c = {**vazio, "ts": _time.time(), "erro": f"Pedidos em aberto indisponíveis agora ({e})."}
+        _TRANSITO_CACHE[obra] = c
+        return c
+
+
+def _transito_publico(t: dict) -> dict:
+    """Resumo serializável do trânsito (chaves de tupla não vão para JSON)."""
+    return {"atualizado_em": datetime.fromtimestamp(t["ts"]).isoformat(timespec="minutes") if t.get("ts") else None,
+            "erro": t.get("erro"), "n_pedidos": t.get("n_pedidos", 0),
+            "n_sem_conversao": len(t.get("sem_conversao") or [])}
+
+
 @app.get("/api/estoque/suprimentos")
 def suprimentos(obra: str = Query(...), cobertura_alvo: int = 45,
                 usuario: str = Depends(acesso("suprimentos"))):
     """MRP preditivo: junta a análise de consumo (ruptura por insumo), o lead time
-    real por fornecedor (recebimentos) e o % no prazo (fornecedores)."""
+    real por fornecedor (recebimentos), o % no prazo (fornecedores) e o que já está
+    A CAMINHO (pedidos autorizados não recebidos) — não sugere recomprar o já pedido."""
     obra_ou_erro(obra)
+    t = _em_transito(obra)
+    a_caminho = engine.transito_por_insumo(t)
 
     def _calc():
         nomes = _nomes_fornecedores(obra)
         receb = engine.recebimentos(_pedidos(obra), _movimentos(obra), nomes, hoje=date.today())
         forn = engine.fornecedores(_pedidos(obra), nomes, hoje=date.today())
         return engine.suprimentos(_analise(obra)["itens"], receb["lead_fornecedores"],
-                                  forn["fornecedores"], hoje=date.today(), cobertura_alvo=cobertura_alvo)
-    return _memo(obra, f"suprimentos:{cobertura_alvo}", _calc)
+                                  forn["fornecedores"], hoje=date.today(), cobertura_alvo=cobertura_alvo,
+                                  a_caminho=a_caminho)
+    res = _memo(obra, f"suprimentos:{cobertura_alvo}:{t.get('ts')}", _calc)
+    return {**res, "a_caminho": _transito_publico(t)}
 
 
 # ---- aprovação: contexto orçamento × apropriação ---------------------------
@@ -810,8 +904,11 @@ def _projecao_estoque(obra: str, itens: list[dict]) -> list[dict]:
     O estoque atual vem do inventário OFICIAL do Sienge (mesma fonte do módulo de
     estoque — sem dados paralelos), casado no MESMO nível de identificação do item:
     se a solicitação especifica um detalhe/marca, usa o saldo daquela variação;
-    caso contrário, usa o total do insumo e devolve o detalhamento por variação."""
+    caso contrário, usa o total do insumo e devolve o detalhamento por variação.
+    Complementar (NÃO entra na fórmula): `a_caminho` = comprado e ainda não recebido,
+    no mesmo nível (detalhe pedido, ou o insumo todo)."""
     inv = _estoque_inv(obra)
+    transito = _em_transito(obra).get("por_chave", {})
     por_detalhe: dict[tuple, list] = {}   # (rid, detailId, trademarkId) -> [qtd, unidade]
     por_recurso: dict[str, dict] = {}     # rid -> {total, unidade, variantes[]}
     for r in inv:
@@ -844,7 +941,14 @@ def _projecao_estoque(obra: str, itens: list[dict]) -> list[dict]:
             variantes = todas
             outros = []  # sem detalhe pedido, o rateio (variantes) já mostra tudo
         qsol = it.get("quantidade") or 0
+        if did is not None:
+            tr = [t for (r, d), t in transito.items() if r == rid and d == did]
+        else:
+            tr = [t for (r, _), t in transito.items() if r == rid]
         out.append({**it,
+                    "a_caminho": round(sum(t["qtd"] for t in tr), 3),
+                    "a_caminho_estimado": any(t["estimado"] for t in tr),
+                    "a_caminho_pedidos": sorted({p["numero"] for t in tr for p in t["pedidos"]}),
                     "estoque_atual": round(atual, 3),
                     "estoque_unidade": uni,
                     "estoque_projetado": round(atual + qsol, 3),

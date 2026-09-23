@@ -79,7 +79,12 @@ export default function Suprimentos({ obra }: { obra: string }) {
       <div className="chart-card">
         <div className="chart-head">
           <div><h3>Suprimentos · MRP preditivo</h3>
-            <span className="chart-sub">Selecione o que comprar → o BOX21 consolida por fornecedor e gera o plano de compra.</span></div>
+            <span className="chart-sub">Selecione o que comprar → o BOX21 consolida por fornecedor e gera o plano de compra.</span>
+            {d.a_caminho && (d.a_caminho.erro
+              ? <div className="meta" style={{ color: 'var(--baixo)' }}>⚠ {d.a_caminho.erro} As quantidades abaixo NÃO descontam o que já foi comprado.</div>
+              : <div className="meta">Quantidades já descontam o que está a caminho: {d.a_caminho.n_pedidos} pedido(s) em aberto no Sienge
+                  {d.a_caminho.atualizado_em ? ` · lido às ${d.a_caminho.atualizado_em.slice(11, 16)}` : ''}
+                  {d.a_caminho.n_sem_conversao ? ` · ${d.a_caminho.n_sem_conversao} item(ns) em unidade de compra sem conversão (não descontados)` : ''}</div>)}</div>
           <div className="seg sm">
             <button className={vista === 'necessidades' ? 'on' : ''} onClick={() => setVista('necessidades')}>Necessidades</button>
             <button className={vista === 'planos' ? 'on' : ''} onClick={() => setVista('planos')}>Planos ({planos.length})</button>
@@ -121,6 +126,7 @@ export default function Suprimentos({ obra }: { obra: string }) {
                         <td>
                           <div className={i.cobertura_dias <= 0 ? 'sup-rup' : ''}>{num(i.cobertura_dias, 0)} d</div>
                           <div className="meta">saldo {num(i.saldo, 1)} {i.unidade}</div>
+                          {i.a_caminho > 0 && <div className="meta" style={{ color: 'var(--entrada)' }}>+ {num(i.a_caminho, 1)} a caminho</div>}
                         </td>
                         <td>
                           <div className="desc" style={{ fontSize: 12.5 }}>{i.fornecedor || '—'}</div>

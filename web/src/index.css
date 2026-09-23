@@ -373,6 +373,9 @@ code { background: #0006; padding: 1px 5px; border-radius: 5px; }
 .proj-vars-lbl { width: 100%; }
 .proj-var { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
 .proj-var b { color: var(--text); font-variant-numeric: tabular-nums; }
+/* comprado e não recebido (informativo, fora da fórmula do projetado) */
+.a-caminho { margin-top: 8px; color: var(--entrada); }
+.a-caminho b { font-weight: 700; }
 /* seção complementar/secundária: outros detalhes do mesmo insumo com estoque > 0 */
 .outros { margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--line); }
 .outros-lbl { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
