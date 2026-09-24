@@ -34,6 +34,14 @@ def historico(obra: str, limite: int = 200):
     return _impl().historico(obra, limite)
 
 
+def consumo_eap(obra: str) -> list[dict]:
+    return _impl().consumo_eap(obra)
+
+
+def por_vinculo(campo: str, valor) -> list[dict]:
+    return _impl().por_vinculo(campo, valor)
+
+
 def por_id(aud_id: int):
     return _impl().por_id(aud_id)
 

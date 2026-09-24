@@ -1,11 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { api, brl, num, type ConsumoData, type ConsumoMes } from './api'
 import Loader from './Loader'
+const ConsumoEap = lazy(() => import('./ConsumoEap'))
 
 const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
 const rotuloMes = (k: string) => { const [y, m] = k.split('-'); return `${MESES_PT[+m - 1]}/${y.slice(2)}` }
 
 export default function Consumo({ obra }: { obra: string }) {
+  const [aba, setAba] = useState<'geral' | 'eap'>('geral')
+  return (
+    <>
+      <div className="seg req-abas">
+        <button className={aba === 'geral' ? 'on' : ''} onClick={() => setAba('geral')}>Visão geral</button>
+        <button className={aba === 'eap' ? 'on' : ''} onClick={() => setAba('eap')}>Consumo × orçado (EAP)</button>
+      </div>
+      {aba === 'geral' ? <ConsumoGeral obra={obra} />
+        : <Suspense fallback={<Loader label="o consumo por subetapa" />}><ConsumoEap obra={obra} /></Suspense>}
+    </>
+  )
+}
+
+function ConsumoGeral({ obra }: { obra: string }) {
   const [d, setD] = useState<ConsumoData | null>(null)
   const [err, setErr] = useState('')
   const [meses, setMeses] = useState(12)

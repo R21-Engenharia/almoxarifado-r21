@@ -42,6 +42,7 @@ import supa
 import demo_data
 import engine
 import audit
+import livro
 import grupos_sienge
 from obras import OBRAS, obra_ou_erro
 
@@ -55,6 +56,7 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=800)
 
 audit.init_db()
+livro.init_db()
 
 
 # ---------------------------------------------------------------- autenticação
@@ -374,7 +376,8 @@ def listar_obras(usuario: str = Depends(usuario_logado)):
 
 # ---------------------------------------------------------------- usuários / permissões
 _MODULOS = ["financeiro", "posicao", "recebimentos", "consumo", "suprimentos", "fornecedores",
-            "equipamentos", "aprovacao", "requisicao", "estoque", "operar", "historico"]
+            "equipamentos", "aprovacao", "requisicao", "estoque", "operar", "historico",
+            "transferencias", "inventario"]
 
 
 def _perfil_norm(row: dict | None, email: str) -> dict:
@@ -1197,8 +1200,12 @@ def atualizar_grupos(usuario: str = Depends(acesso("posicao"))):
 def catalogo(obra: str = Query(...), usuario: str = Depends(acesso("operar", "requisicao"))):
     obra_ou_erro(obra)
     est = _analise(obra)
-    # catálogo = itens com grupo/macro/saldo/consumo (sem os blocos de alerta)
-    return {"itens": est["itens"], "macro_ordem": _macros_presentes(est["itens"])}
+    # catálogo = itens com grupo/macro/saldo/consumo (sem os blocos de alerta) + o que está
+    # RESERVADO por requisições aprovadas e ainda não entregues (disponível = saldo - reservado)
+    res = operacoes.reservas_por_insumo(obra)
+    itens = [{**i, "reservado": round(res[i["resource_id"]], 4)} if i["resource_id"] in res else i
+             for i in est["itens"]]
+    return {"itens": itens, "macro_ordem": _macros_presentes(est["itens"])}
 
 
 @app.get("/api/estoque/insumos")
@@ -1240,10 +1247,20 @@ class ItemEscrita(BaseModel):
     fator_embalagem: float | None = None
 
 
+class EapRef(BaseModel):
+    """Subetapa do orçamento (EAP/WBS) onde o material vai ser aplicado."""
+    uc_id: int | None = None          # unidade construtiva (o mesmo código existe em várias)
+    codigo: str
+    descricao: str | None = None
+
+
 class Escrita(BaseModel):
     itens: list[ItemEscrita]
     terceiro: str | None = None       # quem retira o material (requisição/retirada)
     solicitante: str | None = None    # quem solicitou
+    eap: EapRef | None = None         # subetapa do consumo (vale para todos os itens da cesta)
+    motivo: str | None = None         # devolução / saída avulsa / ajuste
+    condicao: str | None = None       # devolução: novo | reaproveitavel
 
 
 class Estorno(BaseModel):
@@ -1253,9 +1270,20 @@ class Estorno(BaseModel):
 # semântica adotada. documentId confirmados nos movimentos REAIS do Sienge:
 # tipo 2 (Consumo)->REQ ; tipo 9 (Entrada Avulsa)->INIE ; tipo 10 (Saída Avulsa)->INIE
 _OP = {
-    "baixa": (2, "REQ"),      # Consumo
-    "entrada": (9, "INIE"),   # Inicialização - Entrada Avulsa
+    "baixa": (2, "REQ"),            # Consumo
+    "entrada": (9, "INIE"),         # Inicialização - Entrada Avulsa
+    "devolucao": (9, "INIE"),       # sobra que volta da frente de obra (com motivo e condição)
+    "saida": (10, "INIE"),          # Saída Avulsa com motivo (perda, devolução ao fornecedor, venda…)
+    "transf_saida": (10, "INIE"),   # transferência: sai da obra de origem
+    "transf_entrada": (9, "INIE"),  # transferência: entra na obra de destino
+    "transf_retorno": (9, "INIE"),  # transferência cancelada: volta para a origem
+    "ajuste_mais": (9, "INIE"),     # inventário: sobra
+    "ajuste_menos": (10, "INIE"),   # inventário: falta
 }
+_ROTULO_OP = {"devolucao": "devolução", "saida": "saída avulsa", "transf_saida": "transferência (saída)",
+              "transf_entrada": "transferência (entrada)", "transf_retorno": "transferência cancelada",
+              "ajuste_mais": "ajuste de inventário (+)", "ajuste_menos": "ajuste de inventário (-)"}
+_MOTIVOS_SAIDA = ("perda", "avaria", "devolucao_fornecedor", "venda", "doacao", "outro")
 
 
 def _preco_unit(prevision_id: str, rid) -> float:
@@ -1266,7 +1294,7 @@ def _preco_unit(prevision_id: str, rid) -> float:
 
 
 def _gravar_avulso(cost_center_id, prevision_id, tipo_id, doc, hoje,
-                   rid, qtd, unid, notes, detail_id=None, trademark_id=None):
+                   rid, qtd, unid, notes, detail_id=None, trademark_id=None, preco=None):
     """Cria movimento de entrada/saída AVULSA (tipo 9/10). O Sienge exige:
     unitPrice (nas entradas) + buildingAppropriations somando 100% num item de
     orçamento (WBS) NÃO bloqueado. Tenta cada item de orçamento até um aceitar.
@@ -1283,8 +1311,8 @@ def _gravar_avulso(cost_center_id, prevision_id, tipo_id, doc, hoje,
         base_item["detailId"] = detail_id
     if trademark_id is not None:
         base_item["trademarkId"] = trademark_id
-    if tipo_id == 9:  # entrada exige preço unitário
-        base_item["unitPrice"] = round(_preco_unit(prevision_id, rid) or 0.01, 4)
+    if tipo_id == 9:  # entrada exige preço unitário (transferência: o custo da obra de origem)
+        base_item["unitPrice"] = round(preco or _preco_unit(prevision_id, rid) or 0.01, 4)
     # pula itens de orçamento já sabidamente bloqueados (acelera estornos seguintes)
     ordenados = sorted(cands, key=lambda c: c["sheetItemId"] in _SHEET_BLOQUEADOS)
     ultimo = None
@@ -1337,15 +1365,19 @@ def _chaves_itens(chave: str | None, itens: list[ItemEscrita]) -> list[str | Non
     return out
 
 
-def _item_audit(i: ItemEscrita, chave: str | None) -> dict:
-    return {"resource_id": i.resource_id, "quantidade": i.quantidade, "unidade": i.unidade,
-            "descricao": i.descricao, "detail_id": i.detail_id, "trademark_id": i.trademark_id,
-            "variante": i.variante, "embalagem": i.embalagem,
-            "fator_embalagem": i.fator_embalagem, "chave_idempotencia": chave}
+def _item_audit(i: ItemEscrita, chave: str | None, eap: EapRef | None = None) -> dict:
+    d = {"resource_id": i.resource_id, "quantidade": i.quantidade, "unidade": i.unidade,
+         "descricao": i.descricao, "detail_id": i.detail_id, "trademark_id": i.trademark_id,
+         "variante": i.variante, "embalagem": i.embalagem,
+         "fator_embalagem": i.fator_embalagem, "chave_idempotencia": chave}
+    if eap is not None:
+        d.update(eap_uc_id=eap.uc_id, eap_codigo=eap.codigo, eap_descricao=eap.descricao)
+    return d
 
 
 def _registrar_pendente(**kw) -> list[int]:
     """Grava a auditoria como pendente; conflito de chave = a mesma cesta já está sendo gravada."""
+    kw["extra"] = {k: v for k, v in (kw.get("extra") or {}).items() if v is not None} or None
     try:
         return audit.registrar(status="pendente", sienge_status=None, sienge_movement_id=None,
                                sienge_resposta=None, **kw)
@@ -1384,15 +1416,26 @@ def _fechar_gravado(ids: list[int], resp: dict) -> str | None:
                 "como 'sem confirmação'. Não repita a operação.")
 
 
-def _gravar(prevision_id, operacao, corpo: Escrita, usuario, chave: str | None):
+def _gravar(prevision_id, operacao, corpo: Escrita, usuario, chave: str | None,
+            extra: dict | None = None, precos: dict | None = None):
+    """Grava a cesta no Sienge com auditoria antes e idempotência por item.
+    `extra` = vínculos gravados em cada linha (transferência, requisição, contagem...).
+    `precos` = resource_id -> preço unitário das entradas (transferência usa o da origem)."""
     o = obra_ou_erro(prevision_id)
     tipo_id, doc = _OP[operacao]
     hoje = date.today().isoformat()
-    notes = f"Via app BOX21 ({operacao}) por {usuario}"
+    notes = f"Via app BOX21 ({_ROTULO_OP.get(operacao, operacao)}) por {usuario}"
     if corpo.terceiro:
         notes += f" | Retirada: {corpo.terceiro}"
     if corpo.solicitante:
         notes += f" | Solic.: {corpo.solicitante}"
+    if corpo.eap:
+        notes += f" | EAP: {corpo.eap.codigo} {(corpo.eap.descricao or '')[:60]}".rstrip()
+    extra = {**(extra or {}), "motivo": corpo.motivo, "condicao": corpo.condicao}
+    if extra.get("motivo"):
+        notes += f" | Motivo: {extra['motivo']}"
+    if extra.get("obra_contraparte"):
+        notes += f" | Obra: {extra['obra_contraparte']}"
 
     # 1) idempotência: o que desta cesta já foi gravado / ficou sem confirmação?
     chaves = _chaves_itens(chave, corpo.itens)
@@ -1408,11 +1451,11 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario, chave: str | None):
 
     base = dict(usuario=usuario, obra=prevision_id, operacao=operacao, movement_type_id=tipo_id,
                 document_id=doc, movement_date=hoje, terceiro=corpo.terceiro,
-                solicitante=corpo.solicitante)
+                solicitante=corpo.solicitante, extra=extra)
 
     if operacao == "baixa":
         # consumo (tipo 2): um único movimento com N linhas -> tudo ou nada
-        ids = _registrar_pendente(itens=[_item_audit(i, c) for i, c in fila], **base)
+        ids = _registrar_pendente(itens=[_item_audit(i, c, corpo.eap) for i, c in fila], **base)
         itens_sienge = []
         for i, _ in fila:
             it = {"resourceId": int(i.resource_id) if str(i.resource_id).isdigit() else i.resource_id,
@@ -1439,27 +1482,29 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario, chave: str | None):
         return {"ok": True, "modo": "demo" if _modo_demo() else "sienge", "repetida": False,
                 "sienge": resp, "auditoria_ids": ja_ids + ids, "aviso": aviso}
 
-    # entrada (tipo 9): o Sienge exige um movimento por item -> item a item, com status
+    # avulsos (tipo 9/10): o Sienge exige um movimento por item -> item a item, com status
     # próprio; se um falha, os anteriores ficam gravados e a resposta diz quantos foram.
     gravados_ids: list[int] = []
     gravados: list[ItemEscrita] = []
-    precos: dict = {}
+    precos_ok: dict = {}
     resp = None
     aviso = None
     for i, c in fila:
-        ids = _registrar_pendente(itens=[_item_audit(i, c)], **base)
-        preco = round(_preco_unit(prevision_id, i.resource_id) or 0.01, 4)
+        ids = _registrar_pendente(itens=[_item_audit(i, c, corpo.eap)], **base)
+        preco = round((precos or {}).get(str(i.resource_id))
+                      or _preco_unit(prevision_id, i.resource_id) or 0.01, 4)
         try:
             if _modo_demo():
                 resp = {"status": 201, "movement_id": f"DEMO-{operacao}", "resposta": {"demo": True}}
             else:
                 resp = _gravar_avulso(o["cost_center_id"], prevision_id, tipo_id, doc, hoje,
                                       i.resource_id, i.quantidade, i.unidade or "", notes,
-                                      detail_id=i.detail_id, trademark_id=i.trademark_id)
+                                      detail_id=i.detail_id, trademark_id=i.trademark_id,
+                                      preco=preco if tipo_id == 9 else None)
         except HTTPException as e:  # recusa definitiva do Sienge
             _marcar_falha(ids, status="falhou", sienge_status=e.status_code,
                             erro=str(e.detail)[:500], liberar_chave=True)
-            _anexar_local(prevision_id, gravados, tipo_id, precos)
+            _anexar_local(prevision_id, gravados, tipo_id, precos_ok)
             nome = i.descricao or f"#{i.resource_id}"
             ja = len(ja_ids) + len(gravados)
             raise HTTPException(422, f"{e.detail} — item '{nome}'. " + (
@@ -1467,13 +1512,13 @@ def _gravar(prevision_id, operacao, corpo: Escrita, usuario, chave: str | None):
                 "grave de novo a mesma cesta que só os que faltam serão enviados." if ja else
                 "Nada desta cesta foi gravado."))
         except Exception:
-            _anexar_local(prevision_id, gravados, tipo_id, precos)
+            _anexar_local(prevision_id, gravados, tipo_id, precos_ok)
             raise HTTPException(502, _MSG_SEM_CONFIRMACAO)
         aviso = _fechar_gravado(ids, resp) or aviso
         gravados_ids += ids
         gravados.append(i)
-        precos[str(i.resource_id)] = preco
-    _anexar_local(prevision_id, gravados, tipo_id, precos)
+        precos_ok[str(i.resource_id)] = preco
+    _anexar_local(prevision_id, gravados, tipo_id, precos_ok)
     return {"ok": True, "modo": "demo" if _modo_demo() else "sienge", "repetida": False,
             "sienge": resp, "auditoria_ids": ja_ids + gravados_ids, "aviso": aviso}
 
@@ -1496,6 +1541,37 @@ def entrada(corpo: Escrita, obra: str = Query(...),
     return _gravar(obra, "entrada", corpo, usuario, _chave_valida(idempotency_key))
 
 
+_CONDICOES = ("novo", "reaproveitavel")
+
+
+@app.post("/api/estoque/devolucao")
+def devolucao(corpo: Escrita, obra: str = Query(...),
+              idempotency_key: str | None = Header(default=None),
+              usuario: str = Depends(operador("operar"))):
+    """Sobra que volta da frente de obra para o almoxarifado (entrada com motivo e condição).
+    Material avariado não volta para o saldo: registre como saída avulsa (avaria)."""
+    if not corpo.itens:
+        raise HTTPException(400, "Nenhum item informado")
+    if not (corpo.motivo or "").strip():
+        raise HTTPException(422, "Informe o motivo da devolução.")
+    if corpo.condicao not in _CONDICOES:
+        raise HTTPException(422, "Informe a condição do material (novo ou reaproveitável). "
+                            "Avariado não volta para o estoque.")
+    return _gravar(obra, "devolucao", corpo, usuario, _chave_valida(idempotency_key))
+
+
+@app.post("/api/estoque/saida")
+def saida_avulsa(corpo: Escrita, obra: str = Query(...),
+                 idempotency_key: str | None = Header(default=None),
+                 usuario: str = Depends(operador("operar", "transferencias"))):
+    """Saída avulsa com motivo: perda, avaria, devolução ao fornecedor, venda, doação."""
+    if not corpo.itens:
+        raise HTTPException(400, "Nenhum item informado")
+    if corpo.motivo not in _MOTIVOS_SAIDA:
+        raise HTTPException(422, "Motivo inválido. Use: " + ", ".join(_MOTIVOS_SAIDA) + ".")
+    return _gravar(obra, "saida", corpo, usuario, _chave_valida(idempotency_key))
+
+
 @app.post("/api/estoque/estorno")
 def estorno(corpo: Estorno, usuario: str = Depends(usuario_admin)):
     linha = audit.por_id(corpo.auditoria_id)
@@ -1505,6 +1581,9 @@ def estorno(corpo: Estorno, usuario: str = Depends(usuario_admin)):
     _checar_acesso(usuario, prevision_id, ("historico",))
     if linha["operacao"] == "estorno":
         raise HTTPException(400, "Não se estorna um estorno.")
+    if str(linha["operacao"]).startswith("transf_"):
+        raise HTTPException(400, "Movimento de transferência: use Transferências (cancelar/receber), "
+                            "não o estorno.")
     if (linha.get("status") or "gravado") != "gravado":
         raise HTTPException(409, "Só dá para estornar movimentos confirmados no Sienge.")
     o = obra_ou_erro(prevision_id)
@@ -1514,10 +1593,10 @@ def estorno(corpo: Estorno, usuario: str = Depends(usuario_admin)):
         raise HTTPException(409, "Este movimento já foi estornado (ou está sendo estornado agora).")
 
     # estorno = movimento compensatório na direção oposta (documentId INIE = avulso)
-    if linha["operacao"] == "baixa":
-        tipo_id, doc = 9, "INIE"    # devolve ao saldo
+    if int(linha.get("movement_type_id") or 0) in (2, 10):
+        tipo_id, doc = 9, "INIE"    # era saída (consumo/avulsa): devolve ao saldo
     else:
-        tipo_id, doc = 10, "INIE"   # retira do saldo
+        tipo_id, doc = 10, "INIE"   # era entrada: retira do saldo
     hoje = date.today().isoformat()
     notes = f"Via app BOX21 (estorno de #{corpo.auditoria_id}) por {usuario}"
     item = ItemEscrita(resource_id=linha["resource_id"], quantidade=linha["quantidade"],
@@ -1551,3 +1630,8 @@ def estorno(corpo: Estorno, usuario: str = Depends(usuario_admin)):
     preco = {str(item.resource_id): round(_preco_unit(prevision_id, item.resource_id), 4)} if tipo_id == 9 else None
     _anexar_local(prevision_id, [item], tipo_id, preco)
     return {"ok": True, "auditoria_ids": ids, "sienge": resp, "aviso": aviso}
+
+
+# ---- passos 08-10: EAP no consumo, transferências, requisições e inventário ----
+import operacoes  # noqa: E402  (usa os helpers acima)
+app.include_router(operacoes.router)

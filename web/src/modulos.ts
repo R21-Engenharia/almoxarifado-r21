@@ -13,6 +13,8 @@ export const MODULOS: ModuloInfo[] = [
   { id: 'requisicao', nome: 'Requisição', grupo: 'Almoxarifado' },
   { id: 'estoque', nome: 'Estoque', grupo: 'Almoxarifado' },
   { id: 'operar', nome: 'Operar', grupo: 'Almoxarifado' },
+  { id: 'transferencias', nome: 'Transferências', grupo: 'Almoxarifado' },
+  { id: 'inventario', nome: 'Inventário', grupo: 'Almoxarifado' },
   { id: 'historico', nome: 'Histórico', grupo: 'Almoxarifado' },
 ]
 
@@ -40,13 +42,13 @@ export const PERFIS: PerfilPreset[] = [
   {
     id: 'almoxarife', nome: 'Almoxarife', tipo: 'Geral', role: 'user',
     descricao: 'Opera o almoxarifado: entrada, baixa, requisição, conferência.',
-    modulos: ['posicao', 'recebimentos', 'equipamentos', 'requisicao', 'estoque', 'operar', 'historico'],
+    modulos: ['posicao', 'recebimentos', 'equipamentos', 'requisicao', 'estoque', 'operar', 'transferencias', 'inventario', 'historico'],
     operar: true, gerar_plano: false, gerenciar_usuarios: false,
   },
   {
     id: 'planejamento', nome: 'Planejamento', tipo: 'Geral', role: 'planejamento',
     descricao: 'MRP, compras e 2ª aprovação. Gera plano de compra.',
-    modulos: ['financeiro', 'posicao', 'recebimentos', 'consumo', 'suprimentos', 'fornecedores', 'aprovacao', 'estoque', 'historico'],
+    modulos: ['financeiro', 'posicao', 'recebimentos', 'consumo', 'suprimentos', 'fornecedores', 'aprovacao', 'estoque', 'transferencias', 'inventario', 'historico'],
     operar: false, gerar_plano: true, gerenciar_usuarios: false,
   },
   {

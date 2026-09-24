@@ -677,3 +677,85 @@ tr.estornado { opacity: .5; }
   .obra-sel { max-width: none; }
   .abc-cards { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ---- passos 08–10: EAP no consumo, pedidos da obra, transferências, inventário ---- */
+.dash > .painel-topo { justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.req-abas { display: inline-flex; margin-bottom: 14px; }
+.op-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.reserva-hint { color: var(--baixo); font-size: 11.5px; font-style: normal; }
+.req-entregue { color: var(--ok); font-style: normal; font-weight: 600; }
+.conf-eap { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.conf-eap b { color: var(--text); }
+.nota-eap { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 14px; max-width: 900px; }
+.sec-tt { font-size: 14px; margin: 18px 0 10px; color: var(--text); }
+
+/* seletor de subetapa */
+.eap-campo { margin-bottom: 14px; }
+.eap-btn { width: 100%; text-align: left; background: var(--bg); color: var(--muted); border: 1px dashed var(--line);
+  border-radius: 10px; padding: 10px 12px; font-size: 13.5px; }
+.eap-btn.on { color: var(--text); border-style: solid; border-color: var(--accent); }
+.eap-btn b { font-family: var(--font-mono); font-size: 12.5px; margin-right: 6px; color: var(--accent); }
+.eap-card { max-width: 640px; width: 100%; }
+.eap-card .busca { width: 100%; margin-bottom: 10px; }
+.eap-scroll { max-height: 55vh; overflow-y: auto; margin-bottom: 12px; }
+.eap-sec { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 10px 0 6px; }
+.eap-vazio { font-size: 12.5px; color: var(--muted); padding: 6px 0; }
+.eap-linha { display: flex; gap: 10px; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--line);
+  color: var(--text); padding: 9px 4px; }
+.eap-linha:hover { background: var(--panel2); }
+.eap-cod { font-family: var(--font-mono); font-size: 12px; color: var(--accent); white-space: nowrap; min-width: 110px; }
+.eap-txt { font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+.eap-txt em { display: block; font-style: normal; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+/* consumo × orçado */
+.eap-rel { display: flex; flex-direction: column; gap: 8px; }
+.eap-rel-sub { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.eap-rel-sub.acima { border-color: #ff3b3066; }
+.eap-rel-head { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; background: none; border: none;
+  color: var(--text); padding: 12px 14px; }
+.eap-rel-head .eap-txt { flex: 1; }
+.eap-rel-v { text-align: right; font-weight: 700; display: flex; flex-direction: column; font-size: 14px; }
+.eap-rel-v em { display: block; font-style: normal; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+.barra-eap { height: 6px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin-bottom: 4px; min-width: 90px; }
+.barra-eap div { height: 100%; background: var(--ok); }
+.barra-eap .st-atencao { background: var(--baixo); }
+.barra-eap .st-acima { background: var(--ruptura); }
+.eap-st { font-size: 11.5px; color: var(--muted); }
+.eap-st.st-acima { color: var(--ruptura); font-weight: 700; }
+.eap-st.st-atencao { color: var(--baixo); }
+
+/* cartões de pedidos e transferências */
+.req-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .req-cards { grid-template-columns: 1fr; } }
+.req-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.req-card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.req-card .meta { margin-bottom: 3px; }
+.req-itens { list-style: none; padding: 0; margin: 10px 0; }
+.req-itens li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.req-itens li b { white-space: nowrap; text-align: right; }
+.req-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.req-acts button { padding: 8px 14px; }
+.st-pill { font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--panel2); color: var(--muted);
+  text-transform: uppercase; white-space: nowrap; }
+.st-pill.st-solicitada, .st-pill.st-em_transito, .st-pill.st-aberta { background: #2dd4bf22; color: var(--entrada); }
+.st-pill.st-aprovada, .st-pill.st-separada, .st-pill.st-parcial, .st-pill.st-contada { background: #eab30822; color: var(--baixo); }
+.st-pill.st-entregue, .st-pill.st-recebida, .st-pill.st-ajustada, .st-pill.st-conferida { background: #22c55e22; color: var(--ok); }
+.st-pill.st-entregando, .st-pill.st-recebendo, .st-pill.st-cancelando, .st-pill.st-enviando, .st-pill.st-ajustando,
+.st-pill.st-recebida_divergencia { background: #f9731622; color: var(--critico); }
+.st-pill.st-reprovada, .st-pill.st-falhou { background: #ef444422; color: var(--ruptura); }
+.op.devolucao, .op.transf_entrada, .op.transf_retorno, .op.ajuste_mais { background: #2dd4bf22; color: var(--entrada); }
+.op.saida, .op.transf_saida, .op.ajuste_menos { background: #ef444422; color: var(--critico); }
+
+/* inventário */
+.inv-gerar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.inv-gerar label { font-size: 13px; color: var(--muted); }
+.inv-gerar .qtd { width: 70px; margin: 0 4px; }
+.inv-lista { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.inv-linha { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.inv-linha label { white-space: nowrap; color: var(--muted); font-size: 13px; }
+tr.inv-div td { background: #f973160d; }
+@media (max-width: 640px) {
+  .op-toolbar .seg, .req-abas { width: 100%; }
+  .op-toolbar .seg button, .req-abas button { flex: 1; padding: 9px 6px; font-size: 12.5px; }
+}

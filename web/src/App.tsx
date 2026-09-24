@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from 'react'
 import {
-  api, brl, num, familiaCurta, STATUS_LABEL, novaChave,
+  api, brl, num, familiaCurta, STATUS_LABEL, novaChave, MOTIVOS_SAIDA, OP_LABEL,
   type Item, type Material, type Movimento, type Obra, type Status, type EscritaItem,
-  type Embalagem,
+  type Embalagem, type EapRef,
 } from './api'
+import { EapCampo } from './Eap'
+import { useEapLista, renovarEap, eapTexto } from './eapDados'
 import { supabase, authAtiva } from './supabase'
 import { Avatar, PerfilModal } from './PerfilCard'
 import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './perfil'
@@ -22,6 +24,8 @@ const CurvaAbc = lazy(() => import('./CurvaAbc'))
 const Equipamentos = lazy(() => import('./EquipamentosView'))
 const Aprovacoes = lazy(() => import('./AprovacaoView'))
 const Usuarios = lazy(() => import('./UsuariosView'))
+const Transferencias = lazy(() => import('./Transferencias'))
+const Inventario = lazy(() => import('./Inventario'))
 import { type Conta } from './api'
 import iconFinanceiro from './assets/menu-icons/financeiro.webp'
 import iconPosicao from './assets/menu-icons/posicao.webp'
@@ -38,12 +42,20 @@ import iconHistorico from './assets/menu-icons/historico.webp'
 
 type Secao = 'financeiro' | 'posicao' | 'recebimentos' | 'consumo' | 'suprimentos' | 'fornecedores'
   | 'equipamentos' | 'estoque' | 'requisicao' | 'aprovacao' | 'operar' | 'historico' | 'usuarios'
+  | 'transferencias' | 'inventario'
 
 // ícone gráfico único por seção (arte BOX21) — reutilizado no render do menu, sem duplicar componente
 const ICON_SRC: Partial<Record<Secao, string>> = {
   financeiro: iconFinanceiro, posicao: iconPosicao, recebimentos: iconRecebimentos, consumo: iconConsumo,
   suprimentos: iconSuprimentos, fornecedores: iconFornecedores, equipamentos: iconEquipamentos,
   aprovacao: iconAprovacao, requisicao: iconRequisicao, estoque: iconEstoque, operar: iconOperar, historico: iconHistorico,
+}
+
+// seções sem arte própria: traço simples no mesmo estilo
+const ICON_SVG: Partial<Record<Secao, ReactNode>> = {
+  usuarios: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></>,
+  transferencias: <><path d="M4 7h13l-3-3M20 17H7l3 3"/></>,
+  inventario: <><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></>,
 }
 
 const NAV: { grupo: string; itens: { id: Secao; nome: string }[] }[] = [
@@ -64,6 +76,8 @@ const NAV: { grupo: string; itens: { id: Secao; nome: string }[] }[] = [
       { id: 'requisicao', nome: 'Requisição' },
       { id: 'estoque', nome: 'Estoque' },
       { id: 'operar', nome: 'Operar' },
+      { id: 'transferencias', nome: 'Transferências' },
+      { id: 'inventario', nome: 'Inventário' },
       { id: 'historico', nome: 'Histórico' },
     ],
   },
@@ -77,9 +91,11 @@ const TITULOS: Record<Secao, { t: string; s: string }> = {
   fornecedores: { t: 'Fornecedores', s: 'Quem entrega no prazo e com qualidade' },
   equipamentos: { t: 'Equipamentos', s: 'Locação, ociosidade e custo' },
   aprovacao: { t: 'Aprovações', s: 'Solicitações com dupla aprovação: Engenharia → Planejamento → Compras' },
-  requisicao: { t: 'Requisição de material', s: 'Retirada guiada com baixa no estoque e ficha para assinatura' },
+  requisicao: { t: 'Requisição de material', s: 'Retirada no balcão e pedidos da obra com reserva de saldo' },
   estoque: { t: 'Estoque', s: 'Risco de ruptura e capital parado' },
-  operar: { t: 'Operar almoxarifado', s: 'Baixa, entrada e ajustes no Sienge' },
+  operar: { t: 'Operar almoxarifado', s: 'Baixa por subetapa, entrada, devolução e saída avulsa no Sienge' },
+  transferencias: { t: 'Transferências', s: 'Remanejar material entre obras e encerrar obra com trilha completa' },
+  inventario: { t: 'Inventário cíclico', s: 'Contagem cega por curva ABC, divergência e ajuste com motivo' },
   historico: { t: 'Histórico', s: 'Movimentações registradas pelo app' },
   usuarios: { t: 'Usuários', s: 'Contas com acesso ao BOX21 e permissões de cada uma' },
 }
@@ -164,7 +180,7 @@ export default function App() {
                 <button key={it.id} className={`side-item ${secao === it.id ? 'on' : ''}`} onClick={() => irPara(it.id)}>
                   {ICON_SRC[it.id]
                     ? <img className="side-ic" src={ICON_SRC[it.id]} alt="" />
-                    : <span className="side-ic side-ic-svg" aria-hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>}
+                    : <span className="side-ic side-ic-svg" aria-hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{ICON_SVG[it.id] || ICON_SVG.usuarios}</svg></span>}
                   <span className="side-nome">{it.nome}</span>
                 </button>
               ))}
@@ -226,7 +242,10 @@ export default function App() {
             {obra && secao === 'fornecedores' && <Fornecedores obra={obra} />}
             {obra && secao === 'equipamentos' && <Equipamentos obra={obra} operador={nomeExibicao} abrirId={eqParam} />}
             {obra && secao === 'aprovacao' && <Aprovacoes obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} />}
-            {obra && secao === 'requisicao' && <Requisicao obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} operador={nomeExibicao} />}
+            {obra && secao === 'requisicao' && <Requisicao obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} operador={nomeExibicao}
+              email={usuario} podeOperar={!!conta && (conta.operar || (conta.role || '').toLowerCase() === 'admin')} />}
+            {obra && secao === 'transferencias' && <Transferencias obra={obra} obraNome={obras.find(o => o.prevision_id === obra)?.nome || obra} />}
+            {obra && secao === 'inventario' && <Inventario obra={obra} />}
           </Suspense>
           {obra && secao === 'estoque' && <Painel obra={obra} />}
           {obra && secao === 'operar' && <Operar obra={obra} />}
@@ -393,12 +412,17 @@ function ItemTable({ itens, cols }: { itens: Item[]; cols: string[] }) {
 }
 
 /* ----------------------------------------------------------- Operar */
+type OpOperar = 'baixa' | 'entrada' | 'devolucao' | 'saida'
+const OP_ROTULO: Record<OpOperar, string> = {
+  baixa: 'Baixa (consumo)', entrada: 'Entrada', devolucao: 'Devolução', saida: 'Saída avulsa',
+}
+
 function Operar({ obra }: { obra: string }) {
   const [itens, setItens] = useState<Item[]>([])
   const [macros, setMacros] = useState<string[]>([])
   const [macro, setMacro] = useState<string>('')
   const [q, setQ] = useState('')
-  const [op, setOp] = useState<'baixa' | 'entrada'>('baixa')
+  const [op, setOp] = useState<OpOperar>('baixa')
   const [cesta, setCesta] = useState<CestaLinha[]>([])
   const [embMap, setEmbMap] = useState<Record<string, Embalagem[]>>({})
   const [sel, setSel] = useState<Item | null>(null)   // insumo sendo adicionado
@@ -406,12 +430,18 @@ function Operar({ obra }: { obra: string }) {
   const [confirmar, setConfirmar] = useState(false)
   const [gravando, setGravando] = useState(false)
   const [erroGravar, setErroGravar] = useState('')
+  const [eap, setEap] = useState<EapRef | null>(null)       // subetapa do consumo (baixa)
+  const [motivo, setMotivo] = useState('')                  // devolução / saída avulsa
+  const [condicao, setCondicao] = useState<'novo' | 'reaproveitavel'>('reaproveitavel')
+  const eapLista = useEapLista(obra)
+  const exigeEap = op === 'baixa' && !!eapLista?.tem_mapa
   // chave de idempotência da cesta. A chave de cada item deriva do próprio item, então
   // ela vale enquanto a cesta existir: itens já gravados nunca são reenviados, mesmo
   // se a cesta for editada após uma falha. Renova ao esvaziar a cesta ou mudar op/obra.
   const [chave, setChave] = useState<string | null>(null)
   useEffect(() => { if (cesta.length === 0) setChave(null) }, [cesta])
-  useEffect(() => { setChave(null) }, [op, obra])
+  useEffect(() => { setChave(null); setMotivo('') }, [op, obra])
+  useEffect(() => { setEap(null) }, [obra])
 
   const carregar = () => api.catalogo(obra).then(r => { setItens(r.itens); setMacros(r.macro_ordem) })
   const carregarEmb = () => api.embalagens().then(r => {
@@ -432,16 +462,24 @@ function Operar({ obra }: { obra: string }) {
   const addLinha = (l: CestaLinha) => setCesta(c => [...c.filter(x => x.key !== l.key), l])
   const removeLinha = (key: string) => setCesta(c => c.filter(x => x.key !== key))
 
+  // o que falta para poder gravar (mostrado no botão)
+  const falta = exigeEap && !eap ? 'Escolha a subetapa'
+    : (op === 'devolucao' || op === 'saida') && !motivo.trim() ? 'Informe o motivo' : ''
+
   const gravar = async () => {
     const payload: EscritaItem[] = cesta.map(linhaParaEscrita)
     const k = chave ?? novaChave()
     setChave(k); setErroGravar(''); setGravando(true)
     try {
-      const r = op === 'baixa' ? await api.baixa(obra, payload, k) : await api.entrada(obra, payload, k)
-      const oper = op === 'baixa' ? 'Baixa' : 'Entrada'
+      const r = op === 'baixa' ? await api.baixa(obra, payload, k, { eap })
+        : op === 'entrada' ? await api.entrada(obra, payload, k)
+          : op === 'devolucao' ? await api.devolucao(obra, payload, k, { motivo: motivo.trim(), condicao, eap })
+            : await api.saida(obra, payload, k, motivo)
+      const oper = OP_ROTULO[op]
       setMsg(r.repetida
         ? `✓ ${oper} já estava registrada — nada foi gravado de novo.`
         : `✓ ${oper} registrada (${r.auditoria_ids.length} item(ns)).${r.aviso ? ' ⚠ ' + r.aviso : ''}`)
+      if (eap) renovarEap(obra)
       setCesta([]); setConfirmar(false); carregar()
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e)
@@ -451,16 +489,44 @@ function Operar({ obra }: { obra: string }) {
   }
 
   const naCesta = (rid: string) => cesta.filter(l => l.item.resource_id === rid).length
+  const saiDoSaldo = op === 'baixa' || op === 'saida'
 
   return (
     <div className="operar">
       <div className="op-toolbar">
         <div className="seg">
-          <button className={op === 'baixa' ? 'on' : ''} onClick={() => setOp('baixa')}>Baixa (consumo)</button>
-          <button className={op === 'entrada' ? 'on' : ''} onClick={() => setOp('entrada')}>Entrada</button>
+          {(Object.keys(OP_ROTULO) as OpOperar[]).map(o => (
+            <button key={o} className={op === o ? 'on' : ''} onClick={() => { setOp(o); setCesta([]) }}>{OP_ROTULO[o]}</button>
+          ))}
         </div>
         <input className="busca" placeholder="buscar insumo ou código…" value={q} onChange={e => setQ(e.target.value)} />
       </div>
+
+      {op === 'baixa' && <EapCampo obra={obra} valor={eap} onChange={setEap}
+        sugerirDe={cesta.map(l => ({ resource_id: l.item.resource_id, detail_id: l.detailId, trademark_id: l.trademarkId }))} />}
+      {op === 'devolucao' && (
+        <div className="req-topo">
+          <div className="campo"><span>Motivo da devolução *</span>
+            <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="ex.: sobra da frente do 3º pavimento" /></div>
+          <div className="campo"><span>Condição do material *</span>
+            <div className="seg sm">
+              <button className={condicao === 'novo' ? 'on' : ''} onClick={() => setCondicao('novo')}>Novo (lacrado)</button>
+              <button className={condicao === 'reaproveitavel' ? 'on' : ''} onClick={() => setCondicao('reaproveitavel')}>Reaproveitável</button>
+            </div>
+            <div className="op-hint">Avariado não volta para o estoque: use <b>Saída avulsa › Avaria</b>.</div></div>
+        </div>
+      )}
+      {op === 'devolucao' && <EapCampo obra={obra} valor={eap} onChange={setEap} rotulo="Subetapa de onde o material voltou (opcional)" />}
+      {op === 'saida' && (
+        <div className="campo"><span>Motivo da saída *</span>
+          <div className="chips">
+            {Object.entries(MOTIVOS_SAIDA).map(([k, v]) => (
+              <button key={k} className={motivo === k ? 'on' : ''} onClick={() => setMotivo(k)}>{v}</button>
+            ))}
+          </div>
+          <div className="op-hint">Para mandar material para outra obra use <b>Transferências</b> — assim a outra obra confirma o recebimento.</div>
+        </div>
+      )}
 
       <div className="chips">
         <button className={!macro ? 'on' : ''} onClick={() => setMacro('')}>Todos</button>
@@ -481,7 +547,8 @@ function Operar({ obra }: { obra: string }) {
                     <div className="desc">{i.descricao}</div>
                     <div className="meta"><StatusPill s={i.status} /> {i.macro}{i.familia ? ` · ${familiaCurta(i.familia)}` : ''} · #{i.resource_id}</div>
                   </td>
-                  <td className="r">{num(i.saldo, 2)} <span className="u">{i.unidade}</span></td>
+                  <td className="r">{num(i.saldo, 2)} <span className="u">{i.unidade}</span>
+                    {(i.reservado || 0) > 0 && <div className="reserva-hint">{num(i.reservado ?? 0, 2)} reservado</div>}</td>
                   <td className="r">
                     <button className="mini" onClick={() => setSel(i)}>{n ? `+ (${n})` : '+ Adicionar'}</button>
                   </td>
@@ -494,23 +561,26 @@ function Operar({ obra }: { obra: string }) {
       </div>
 
       {sel && (
-        <AddInsumoModal obra={obra} op={op} item={sel} embalagens={embMap[sel.resource_id] || []}
+        <AddInsumoModal obra={obra} op={saiDoSaldo ? 'baixa' : 'entrada'} item={sel} embalagens={embMap[sel.resource_id] || []}
+          verbo={op === 'devolucao' ? 'Devolver' : op === 'saida' ? 'Dar saída em' : undefined}
           onEmbSalva={carregarEmb}
           onAdd={addLinha} onClose={() => setSel(null)} />
       )}
 
       {cesta.length > 0 && (
         <div className="cesta-bar">
-          <div className="cesta-info">{cesta.length} linha(s) · {op === 'baixa' ? 'baixa' : 'entrada'}</div>
-          <button className="cta" onClick={() => { setErroGravar(''); setConfirmar(true) }}>Revisar e gravar</button>
+          <div className="cesta-info">{cesta.length} linha(s) · {OP_ROTULO[op].toLowerCase()}</div>
+          <button className="cta" disabled={!!falta} onClick={() => { setErroGravar(''); setConfirmar(true) }}>{falta || 'Revisar e gravar'}</button>
         </div>
       )}
 
       {confirmar && (
         <div className="modal" onClick={() => !gravando && setConfirmar(false)}>
           <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <h3>Confirmar {op === 'baixa' ? 'baixa (consumo)' : 'entrada'}</h3>
+            <h3>Confirmar {OP_ROTULO[op].toLowerCase()}</h3>
             <p className="warn-txt">Isto grava no Sienge e é registrado na auditoria. Estorno depois é possível, mas gera um novo movimento.</p>
+            {eap && <p className="conf-eap">Subetapa: <b>{eap.codigo}</b> {eap.descricao}</p>}
+            {motivo && <p className="conf-eap">Motivo: <b>{op === 'saida' ? MOTIVOS_SAIDA[motivo] : motivo}</b>{op === 'devolucao' && ` · ${condicao === 'novo' ? 'novo' : 'reaproveitável'}`}</p>}
             <ul className="conf-list">
               {cesta.map(l => (
                 <li key={l.key}>
@@ -564,15 +634,18 @@ function Historico({ obra, admin }: { obra: string; admin: boolean }) {
               {movs.map(m => (
                 <tr key={m.id} className={m.estornado ? 'estornado' : ''}>
                   <td>{new Date(m.criado_em).toLocaleString('pt-BR')}</td>
-                  <td><span className={`op ${m.operacao}`}>{m.operacao}</span></td>
+                  <td><span className={`op ${m.operacao}`}>{OP_LABEL[m.operacao] || m.operacao}</span></td>
                   <td><div className="desc">{m.descricao || '#' + m.resource_id}</div>
                     <div className="meta">#{m.resource_id}{m.variante ? ` · ${m.variante}` : ''} · {m.document_id}</div>
+                    {(m.eap_codigo || m.motivo || m.obra_contraparte) && <div className="meta">
+                      {[eapTexto(m) && `EAP ${eapTexto(m)}`, m.motivo && `motivo: ${MOTIVOS_SAIDA[m.motivo] || m.motivo}`,
+                        m.condicao, m.obra_contraparte && `obra ${m.obra_contraparte}`].filter(Boolean).join(' · ')}</div>}
                     {m.status && STATUS_MOV[m.status] &&
                       <div className="meta"><span className={`mov-st ${m.status}`} title={m.erro || undefined}>{STATUS_MOV[m.status]}</span>{m.erro ? ` · ${m.erro}` : ''}</div>}</td>
                   <td className="r">{num(m.quantidade, 2)} {m.unidade}</td>
                   <td className="who-cell">{m.usuario}</td>
                   <td className="r">
-                    {admin && m.operacao !== 'estorno' && !m.estornado && (m.status ?? 'gravado') === 'gravado' &&
+                    {admin && m.operacao !== 'estorno' && !m.operacao.startsWith('transf_') && !m.estornado && (m.status ?? 'gravado') === 'gravado' &&
                       <button className="mini" onClick={() => estornar(m)} disabled={estornandoId !== null}>
                         {estornandoId === m.id ? 'Estornando…' : 'Estornar'}</button>}
                     {m.estornado ? <span className="badge">estornado</span> : null}

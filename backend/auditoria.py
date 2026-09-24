@@ -52,11 +52,16 @@ create index if not exists idx_estoque_mov_obra on estoque_movimentos(obra, cria
 # colunas acrescentadas depois da primeira versão (migração de bancos antigos)
 _COLS_NOVAS = ("terceiro text", "solicitante text", "detail_id integer", "trademark_id integer",
                "variante text", "embalagem text", "fator_embalagem real",
-               "chave_idempotencia text", "status text not null default 'gravado'", "erro text")
+               "chave_idempotencia text", "status text not null default 'gravado'", "erro text",
+               "eap_uc_id integer", "eap_codigo text", "eap_descricao text", "motivo text",
+               "condicao text", "transferencia_id integer", "obra_contraparte text",
+               "requisicao_id integer", "contagem_id integer")
 
 # campos de item gravados junto com a linha
 _CAMPOS_ITEM = ("detail_id", "trademark_id", "variante", "embalagem", "fator_embalagem",
-                "chave_idempotencia")
+                "chave_idempotencia", "eap_uc_id", "eap_codigo", "eap_descricao")
+_CAMPOS_EXTRA = ("motivo", "condicao", "transferencia_id", "obra_contraparte", "requisicao_id",
+                 "contagem_id")
 
 
 def _conn():
@@ -87,9 +92,10 @@ def init_db():
 def registrar(usuario, obra, operacao, movement_type_id, document_id,
               movement_date, sienge_status, sienge_movement_id, sienge_resposta,
               itens, estorno_de=None, terceiro=None, solicitante=None,
-              status="gravado") -> list[int]:
+              status="gravado", extra: dict | None = None) -> list[int]:
     """Grava uma linha por item. Retorna os ids criados."""
     ids = []
+    ext = [(extra or {}).get(k) for k in _CAMPOS_EXTRA]
     agora = datetime.now(timezone.utc).isoformat()
     with _conn() as c:
         for it in itens:
@@ -99,14 +105,16 @@ def registrar(usuario, obra, operacao, movement_type_id, document_id,
                  movement_type_id, quantidade, unidade, document_id, movement_date,
                  sienge_status, sienge_movement_id, sienge_resposta, estorno_de,
                  terceiro, solicitante, status,
-                 detail_id, trademark_id, variante, embalagem, fator_embalagem, chave_idempotencia)
-                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 detail_id, trademark_id, variante, embalagem, fator_embalagem, chave_idempotencia,
+                 eap_uc_id, eap_codigo, eap_descricao,
+                 motivo, condicao, transferencia_id, obra_contraparte, requisicao_id, contagem_id)
+                values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (agora, usuario, obra, str(it["resource_id"]), it.get("descricao"),
                  operacao, movement_type_id, float(it["quantidade"]), it.get("unidade"),
                  document_id, movement_date, sienge_status, str(sienge_movement_id or ""),
                  json.dumps(sienge_resposta, ensure_ascii=False), estorno_de,
                  terceiro, solicitante, status,
-                 *(it.get(k) for k in _CAMPOS_ITEM)),
+                 *(it.get(k) for k in _CAMPOS_ITEM), *ext),
             )
             ids.append(cur.lastrowid)
     return ids
@@ -152,6 +160,22 @@ def historico(obra: str, limite: int = 200) -> list[dict]:
             "select * from estoque_movimentos where obra=? order by criado_em desc limit ?",
             (str(obra), limite),
         ).fetchall()
+    return [_row(r) for r in rows]
+
+
+def consumo_eap(obra: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("select * from estoque_movimentos where obra=? and operacao='baixa' "
+                         "and status='gravado' and estornado=0 order by id", (str(obra),)).fetchall()
+    return [_row(r) for r in rows]
+
+
+def por_vinculo(campo: str, valor) -> list[dict]:
+    if campo not in ("transferencia_id", "requisicao_id", "contagem_id"):
+        raise ValueError(campo)
+    with _conn() as c:
+        rows = c.execute(f"select * from estoque_movimentos where {campo}=? order by id",
+                         (valor,)).fetchall()
     return [_row(r) for r in rows]
 
 

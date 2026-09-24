@@ -81,7 +81,9 @@ export function AddInsumoModal({ obra, op, item, embalagens, onEmbSalva, onAdd, 
     <div className="modal" onClick={onClose}>
       <div className="modal-card add-card" onClick={e => e.stopPropagation()}>
         <h3>{verbo || (op === 'baixa' ? 'Baixar' : 'Dar entrada em')}: {item.descricao}</h3>
-        <div className="add-sub">#{item.resource_id} · saldo total {num(item.saldo, 2)} {item.unidade}</div>
+        <div className="add-sub">#{item.resource_id} · saldo total {num(item.saldo, 2)} {item.unidade}
+          {op === 'baixa' && (item.reservado || 0) > 0 &&
+            <span className="reserva-hint"> · {num(item.reservado ?? 0, 2)} {item.unidade} reservado(s) para pedidos aprovados — disponível {num(item.saldo - (item.reservado ?? 0), 2)}</span>}</div>
 
         {vars === null ? <div className="add-load">carregando variações…</div> : temVar && (
           <div className="add-blk">

@@ -158,6 +158,7 @@ export interface Item {
   fornecedores: string[]
   saldo_negativo: boolean
   unidade_inconsistente: boolean
+  reservado?: number   // requisições aprovadas e ainda não entregues (disponível = saldo − reservado)
 }
 
 export interface Kpis {
@@ -197,6 +198,12 @@ export interface Movimento {
   erro?: string | null
   variante?: string | null
   detail_id?: number | null
+  eap_codigo?: string | null
+  eap_descricao?: string | null
+  motivo?: string | null
+  condicao?: string | null
+  obra_contraparte?: string | null
+  terceiro?: string | null
 }
 
 export type EtapaAprov = 'engenharia' | 'planejamento'
@@ -321,7 +328,7 @@ export const api = {
   atualizar: (obra: string) =>
     req<{ ok: boolean; coletado_em: string | null }>(`/api/estoque/atualizar?obra=${obra}`, { method: 'POST' }),
   // chave = Idempotency-Key da cesta: repetir a mesma cesta não regrava no Sienge
-  baixa: (obra: string, itens: EscritaItem[], chave: string, extra?: { terceiro?: string; solicitante?: string }) =>
+  baixa: (obra: string, itens: EscritaItem[], chave: string, extra?: { terceiro?: string; solicitante?: string; eap?: EapRef | null }) =>
     req<WriteResp>(`/api/estoque/baixa?obra=${obra}`, {
       method: 'POST', headers: { 'Idempotency-Key': chave }, body: JSON.stringify({ itens, ...extra }),
     }),
@@ -331,6 +338,151 @@ export const api = {
     }),
   estorno: (auditoria_id: number) =>
     req<WriteResp>(`/api/estoque/estorno`, { method: 'POST', body: JSON.stringify({ auditoria_id }) }),
+  // devolução (sobra que volta da frente) e saída avulsa com motivo
+  devolucao: (obra: string, itens: EscritaItem[], chave: string, extra: { motivo: string; condicao: string; eap?: EapRef | null }) =>
+    req<WriteResp>(`/api/estoque/devolucao?obra=${obra}`, {
+      method: 'POST', headers: { 'Idempotency-Key': chave }, body: JSON.stringify({ itens, ...extra }),
+    }),
+  saida: (obra: string, itens: EscritaItem[], chave: string, motivo: string) =>
+    req<WriteResp>(`/api/estoque/saida?obra=${obra}`, {
+      method: 'POST', headers: { 'Idempotency-Key': chave }, body: JSON.stringify({ itens, motivo }),
+    }),
+
+  // ---- 08 · EAP no consumo
+  eapLista: (obra: string) => req<EapLista>(`/api/eap/lista?obra=${obra}`),
+  eapInsumo: (obra: string, resourceId: string, detailId?: number | null, trademarkId?: number | null) =>
+    req<{ orcadas: EapOrcada[] }>(`/api/eap/insumo?obra=${obra}&resource_id=${resourceId}` +
+      (detailId != null ? `&detail_id=${detailId}` : '') + (trademarkId != null ? `&trademark_id=${trademarkId}` : '')),
+  consumoOrcado: (obra: string) => req<ConsumoOrcado>(`/api/eap/consumo-orcado?obra=${obra}`),
+
+  // ---- 09 · transferências e desmobilização
+  transfObras: () => req<Obra[]>(`/api/transferencias/obras`),
+  transferencias: (obra: string) => req<{ transferencias: Transferencia[] }>(`/api/transferencias?obra=${obra}`),
+  transfCriar: (obra: string, destino: string, itens: EscritaItem[], chave: string, obs?: string) =>
+    req<{ transferencia: Transferencia; repetida: boolean }>(`/api/transferencias?obra=${obra}`, {
+      method: 'POST', headers: { 'Idempotency-Key': chave }, body: JSON.stringify({ destino, itens, obs: obs || null }),
+    }),
+  transfReceber: (obra: string, id: number, itens: { idx: number; qtd_recebida: number }[], obs?: string) =>
+    req<{ transferencia: Transferencia }>(`/api/transferencias/${id}/receber?obra=${obra}`, {
+      method: 'POST', body: JSON.stringify({ itens, obs: obs || null }),
+    }),
+  transfCancelar: (obra: string, id: number) =>
+    req<{ transferencia: Transferencia }>(`/api/transferencias/${id}/cancelar?obra=${obra}`, { method: 'POST' }),
+  transfSeguir: (obra: string, id: number) =>
+    req<{ transferencia: Transferencia }>(`/api/transferencias/${id}/seguir?obra=${obra}`, { method: 'POST' }),
+  desmobilizacao: (obra: string) => req<Desmobilizacao>(`/api/desmobilizacao?obra=${obra}`),
+  desmobExecutar: (obra: string, decisoes: DecisaoDesmob[], chave: string) =>
+    req<{ ok: boolean; resultados: { grupo: string; ok: boolean; n_itens: number; mensagem: string }[] }>(
+      `/api/desmobilizacao/executar?obra=${obra}`, {
+        method: 'POST', headers: { 'Idempotency-Key': chave }, body: JSON.stringify({ decisoes }),
+      }),
+
+  // ---- 10 · requisição com reserva e inventário cíclico
+  requisicoes: (obra: string, abertas = true) =>
+    req<{ requisicoes: RequisicaoObra[]; papel: string }>(`/api/requisicoes?obra=${obra}&abertas=${abertas}`),
+  reqCriar: (obra: string, dados: {
+    itens: EscritaItem[]; eap: EapRef | null; terceiro?: string; solicitante?: string; necessario_em?: string; obs?: string
+  }) => req<{ requisicao: RequisicaoObra }>(`/api/requisicoes?obra=${obra}`, { method: 'POST', body: JSON.stringify(dados) }),
+  reqAcao: (obra: string, id: number, acao: 'aprovar' | 'reprovar' | 'separar' | 'entregar' | 'cancelar',
+    extra?: { obs?: string; entregas?: { idx: number; quantidade: number }[] }) =>
+    req<{ requisicao: RequisicaoObra; baixa?: WriteResp }>(`/api/requisicoes/${id}/acao?obra=${obra}`, {
+      method: 'POST', body: JSON.stringify({ acao, ...extra }),
+    }),
+  invPlano: (obra: string) => req<PlanoInventario>(`/api/inventario/plano?obra=${obra}`),
+  contagens: (obra: string) => req<{ contagens: Contagem[]; papel: string }>(`/api/inventario/contagens?obra=${obra}`),
+  contagemCriar: (obra: string, dados: { classe?: 'A' | 'B' | 'C' | null; resource_ids?: string[]; max_itens?: number }) =>
+    req<{ contagem: Contagem }>(`/api/inventario/contagens?obra=${obra}`, { method: 'POST', body: JSON.stringify(dados) }),
+  contagemEnviar: (obra: string, id: number, contagens: { idx: number; qtd: number }[], obs?: string) =>
+    req<{ contagem: Contagem }>(`/api/inventario/contagens/${id}/enviar?obra=${obra}`, {
+      method: 'POST', body: JSON.stringify({ contagens, obs: obs || null }),
+    }),
+  contagemAjustar: (obra: string, id: number, motivo: string, idxs?: number[]) =>
+    req<{ contagem: Contagem }>(`/api/inventario/contagens/${id}/ajustar?obra=${obra}`, {
+      method: 'POST', body: JSON.stringify({ motivo, idxs: idxs ?? null }),
+    }),
+  contagemEncerrar: (obra: string, id: number) =>
+    req<{ contagem: Contagem }>(`/api/inventario/contagens/${id}/encerrar?obra=${obra}`, { method: 'POST' }),
+}
+
+// ---- 08 · EAP (subetapa do orçamento onde o material é aplicado)
+export interface EapRef { uc_id: number | null; codigo: string; descricao: string | null }
+export interface EapSubetapa extends EapRef {
+  uc_nome: string | null; unidade: string | null; grupo: string | null; pai: string | null
+}
+export interface EapLista { tem_mapa: boolean; subetapas: EapSubetapa[]; recentes: EapRef[] }
+export interface EapOrcada extends EapRef { uc_nome: string | null; qtd_orcada: number | null }
+export interface ConsumoOrcadoItem {
+  resource_id: string; detail_id: number | null; descricao: string; unidade: string | null
+  qtd_consumida: number; qtd_orcada: number | null; pct: number | null; valor: number; n_baixas: number
+  status: 'ok' | 'atencao' | 'acima' | 'sem_orcamento'
+}
+export interface ConsumoOrcadoSub {
+  uc_id: number | null; uc_nome: string | null; codigo: string; descricao: string
+  valor_consumido: number; n_acima: number; n_sem_orcamento: number; itens: ConsumoOrcadoItem[]
+}
+export interface ConsumoOrcado {
+  hoje: string; desde: string | null
+  kpis: { n_baixas_com_eap: number; n_baixas_sem_eap: number; pct_com_eap: number; n_subetapas: number; n_itens_acima: number; valor_consumido: number }
+  subetapas: ConsumoOrcadoSub[]
+}
+
+// ---- 09 · transferência entre obras
+export interface TransfItem {
+  resource_id: string; descricao: string | null; unidade: string | null; variante?: string | null
+  detail_id?: number | null; trademark_id?: number | null
+  quantidade: number; qtd_enviada: number; qtd_recebida: number | null; preco_unit: number
+}
+export type TransfStatus = 'enviando' | 'falhou' | 'em_transito' | 'recebendo' | 'recebida' | 'recebida_divergencia' | 'cancelando' | 'cancelada'
+export interface Transferencia {
+  id: number; criado_em: string; criado_por: string; origem: string; destino: string
+  origem_nome?: string; destino_nome?: string; sentido?: 'saida' | 'entrada'
+  status: TransfStatus; itens: TransfItem[]; obs: string | null; chave: string | null
+  recebido_por: string | null; recebido_em: string | null; obs_recebimento: string | null; erro: string | null
+}
+export interface DesmobItem {
+  resource_id: string; detail_id: number | null; trademark_id: number | null; descricao: string; variante: string | null
+  unidade: string | null; saldo: number; custo_unit: number; valor: number; sugestao: string | null
+  consumo_outras: { obra: string; nome: string; consumo_dia: number }[]
+}
+export interface Desmobilizacao { itens: DesmobItem[]; valor_total: number; motivos: string[]; obras: Obra[] }
+export interface DecisaoDesmob {
+  resource_id: string; detail_id: number | null; trademark_id: number | null; descricao: string
+  variante: string | null; unidade: string | null; quantidade: number; destino: string
+}
+
+// ---- 10 · requisição da obra (com reserva) e inventário
+export type ReqStatus = 'solicitada' | 'aprovada' | 'reprovada' | 'separada' | 'entregando' | 'parcial' | 'entregue' | 'cancelada'
+export interface ReqItemObra {
+  resource_id: string; descricao: string | null; unidade: string | null; variante?: string | null
+  detail_id?: number | null; trademark_id?: number | null; quantidade: number; qtd_entregue: number
+}
+export interface RequisicaoObra {
+  id: number; criado_em: string; obra: string; criado_por: string; solicitante: string | null; terceiro: string | null
+  eap_uc_id: number | null; eap_codigo: string | null; eap_descricao: string | null
+  necessario_em: string | null; obs: string | null; status: ReqStatus; itens: ReqItemObra[]
+  aprovado_por: string | null; aprov_obs: string | null; erro: string | null; n_entregas: number
+  entrega_pendente?: { n: number; itens: { idx: number; quantidade: number }[] } | null
+}
+export interface PlanoItem {
+  resource_id: string; descricao: string; unidade: string; abc: 'A' | 'B' | 'C'; valor_saldo: number
+  ultima_contagem: string | null; proxima: string; dias_atraso: number; vencido: boolean
+}
+export interface PlanoInventario {
+  hoje: string; itens: PlanoItem[]
+  resumo: Record<'A' | 'B' | 'C', { n_itens: number; n_vencidos: number; n_nunca: number; periodicidade_dias: number }>
+  acuracidade: { n_itens: number; pct_exatos: number | null }
+  tolerancia: { valor: number; pct: number }
+}
+export interface ContagemItem {
+  resource_id: string; detail_id: number | null; trademark_id: number | null; descricao: string; variante: string | null
+  unidade: string | null; abc: string; custo_unit: number; qtd_contada: number | null
+  saldo_sistema?: number; divergencia?: number; valor_divergencia?: number; precisa_aprovacao?: boolean; ajustar?: boolean
+}
+export type ContagemStatus = 'aberta' | 'contada' | 'conferida' | 'ajustando' | 'ajustada' | 'encerrada'
+export interface Contagem {
+  id: number; criado_em: string; obra: string; criado_por: string; classe: string | null
+  status: ContagemStatus; itens: ContagemItem[]; contado_por: string | null; contado_em: string | null
+  motivo: string | null; erro: string | null
 }
 
 export interface EscritaItem {
@@ -359,6 +511,17 @@ export function novaChave(): string {
   const c = globalThis.crypto
   if (c && 'randomUUID' in c) return c.randomUUID()
   return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+export const MOTIVOS_SAIDA: Record<string, string> = {
+  perda: 'Perda', avaria: 'Avaria', devolucao_fornecedor: 'Devolução ao fornecedor',
+  venda: 'Venda', doacao: 'Doação', outro: 'Outro',
+}
+// rótulo curto das operações gravadas pelo app (Histórico)
+export const OP_LABEL: Record<string, string> = {
+  baixa: 'baixa', entrada: 'entrada', estorno: 'estorno', devolucao: 'devolução', saida: 'saída',
+  transf_saida: 'transf. saída', transf_entrada: 'transf. entrada', transf_retorno: 'transf. volta',
+  ajuste_mais: 'ajuste +', ajuste_menos: 'ajuste −',
 }
 
 export const STATUS_LABEL: Record<Status, string> = {

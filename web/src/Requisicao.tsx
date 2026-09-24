@@ -1,15 +1,37 @@
-import { useEffect, useMemo, useState } from 'react'
-import { api, num, familiaCurta, novaChave, type Item, type Embalagem } from './api'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { api, num, familiaCurta, novaChave, type Item, type Embalagem, type EapRef } from './api'
 import { AddInsumoModal, linhaParaEscrita, resumoLinha, type CestaLinha } from './AddInsumo'
+import { EapCampo } from './Eap'
+import { useEapLista, renovarEap } from './eapDados'
 import Loader from './Loader'
+const PedidosObra = lazy(() => import('./PedidosObra'))
 
-interface FichaItem { descricao: string; qtd: number; unidade: string; resource_id: string; variante?: string; embalagem?: string }
-interface Ficha {
+export interface FichaItem { descricao: string; qtd: number; unidade: string; resource_id: string; variante?: string; embalagem?: string }
+export interface Ficha {
   numero: string; terceiro: string; solicitante: string; obraNome: string
-  data: string; operador: string; itens: FichaItem[]
+  data: string; operador: string; itens: FichaItem[]; eap?: string
 }
 
-export default function Requisicao({ obra, obraNome, operador }: { obra: string; obraNome: string; operador: string }) {
+export default function Requisicao({ obra, obraNome, operador, email, podeOperar }: {
+  obra: string; obraNome: string; operador: string; email: string; podeOperar: boolean
+}) {
+  const [aba, setAba] = useState<'balcao' | 'pedidos'>('balcao')
+  return (
+    <>
+      <div className="seg req-abas">
+        <button className={aba === 'balcao' ? 'on' : ''} onClick={() => setAba('balcao')}>Retirada no balcão</button>
+        <button className={aba === 'pedidos' ? 'on' : ''} onClick={() => setAba('pedidos')}>Pedidos da obra</button>
+      </div>
+      {aba === 'balcao'
+        ? <Balcao obra={obra} obraNome={obraNome} operador={operador} />
+        : <Suspense fallback={<Loader label="os pedidos da obra" />}>
+          <PedidosObra obra={obra} obraNome={obraNome} operador={operador} email={email} podeOperar={podeOperar} />
+        </Suspense>}
+    </>
+  )
+}
+
+function Balcao({ obra, obraNome, operador }: { obra: string; obraNome: string; operador: string }) {
   const [itens, setItens] = useState<Item[]>([])
   const [macros, setMacros] = useState<string[]>([])
   const [macro, setMacro] = useState('')
@@ -30,6 +52,10 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
   useEffect(() => { setChave(null) }, [obra])
   const [msg, setMsg] = useState('')
   const [ficha, setFicha] = useState<Ficha | null>(null)
+  const [eap, setEap] = useState<EapRef | null>(null)
+  const eapLista = useEapLista(obra)
+  const faltaEap = !!eapLista?.tem_mapa && !eap
+  useEffect(() => { setEap(null) }, [obra])
 
   const carregar = () => api.catalogo(obra).then(r => { setItens(r.itens); setMacros(r.macro_ordem) })
   const carregarEmb = () => api.embalagens().then(r => {
@@ -60,12 +86,14 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
     const k = chave ?? novaChave()
     setChave(k); setErroGravar(''); setGravando(true)
     try {
-      const r = await api.baixa(obra, cesta.map(linhaParaEscrita), k, { terceiro: terceiro.trim(), solicitante: solicitante.trim() || undefined })
+      const r = await api.baixa(obra, cesta.map(linhaParaEscrita), k, { terceiro: terceiro.trim(), solicitante: solicitante.trim() || undefined, eap })
+      if (eap) renovarEap(obra)
       if (r.aviso) setMsg('⚠ ' + r.aviso)
       setFicha({
         numero: `REQ-${(r.auditoria_ids[0] ?? Date.now()).toString().padStart(5, '0')}`,
         terceiro: terceiro.trim(), solicitante: solicitante.trim(), obraNome,
         data: new Date().toLocaleString('pt-BR'), operador,
+        eap: eap ? `${eap.codigo} · ${eap.descricao || ''}` : undefined,
         itens: cesta.map(l => ({
           descricao: l.item.descricao, qtd: l.baseQtd, unidade: l.unidade, resource_id: l.item.resource_id,
           variante: l.varianteLabel || undefined,
@@ -92,6 +120,9 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
           <input value={solicitante} onChange={e => setSolicitante(e.target.value)} placeholder="quem pediu" />
         </div>
       </div>
+
+      <EapCampo obra={obra} valor={eap} onChange={setEap}
+        sugerirDe={cesta.map(l => ({ resource_id: l.item.resource_id, detail_id: l.detailId, trademark_id: l.trademarkId }))} />
 
       {msg && <div className="msg bad" onClick={() => setMsg('')}>{msg}</div>}
 
@@ -132,8 +163,8 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
       {cesta.length > 0 && (
         <div className="cesta-bar">
           <div className="cesta-info">{cesta.length} item(ns) na requisição{excede && <span style={{ color: 'var(--ruptura)' }}> · qtd acima do saldo</span>}</div>
-          <button className="cta" disabled={!terceiro.trim()} onClick={() => { setErroGravar(''); setConfirmar(true) }}>
-            {terceiro.trim() ? 'Gerar requisição' : 'Informe o terceiro'}</button>
+          <button className="cta" disabled={!terceiro.trim() || faltaEap} onClick={() => { setErroGravar(''); setConfirmar(true) }}>
+            {!terceiro.trim() ? 'Informe o terceiro' : faltaEap ? 'Escolha a subetapa' : 'Gerar requisição'}</button>
         </div>
       )}
 
@@ -142,6 +173,7 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
           <div className="modal-card" onClick={e => e.stopPropagation()}>
             <h3>Confirmar retirada</h3>
             <p className="warn-txt">Retirada para <b style={{ color: 'var(--text)' }}>{terceiro}</b>. Dá baixa no estoque (Sienge) e gera a ficha.</p>
+            {eap && <p className="conf-eap">Subetapa: <b>{eap.codigo}</b> {eap.descricao}</p>}
             <ul className="conf-list">
               {cesta.map(l => (
                 <li key={l.key}>
@@ -162,12 +194,12 @@ export default function Requisicao({ obra, obraNome, operador }: { obra: string;
   )
 }
 
-function FichaView({ ficha, onNova }: { ficha: Ficha; onNova: () => void }) {
+export function FichaView({ ficha, onNova, rotuloNova }: { ficha: Ficha; onNova: () => void; rotuloNova?: string }) {
   return (
     <div className="dash">
       <div className="ficha-acoes no-print">
         <button className="cta" onClick={() => window.print()}>Imprimir / PDF</button>
-        <button className="ghost" onClick={onNova}>Nova requisição</button>
+        <button className="ghost" onClick={onNova}>{rotuloNova || 'Nova requisição'}</button>
       </div>
       <div className="ficha-print">
         <div className="ficha">
@@ -184,6 +216,7 @@ function FichaView({ ficha, onNova }: { ficha: Ficha; onNova: () => void }) {
             <div><span>Retirado por</span><b>{ficha.terceiro}</b></div>
             <div><span>Solicitante</span>{ficha.solicitante || '—'}</div>
             <div><span>Almoxarife</span>{ficha.operador}</div>
+            {ficha.eap && <div><span>Subetapa (EAP)</span>{ficha.eap}</div>}
           </div>
           <table className="ficha-tbl">
             <thead><tr><th>#</th><th>Material</th><th>Código</th><th className="r">Qtd</th><th>Un.</th></tr></thead>

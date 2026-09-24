@@ -186,6 +186,11 @@ def deletar_embalagem(emb_id: str):
 TBL = "/rest/v1/estoque_movimentos"
 _CAMPOS_ITEM = ("detail_id", "trademark_id", "variante", "embalagem", "fator_embalagem",
                 "chave_idempotencia")
+# colunas da migração C (EAP, motivo, vínculos): só vão no insert quando preenchidas,
+# para o código novo continuar gravando mesmo antes de a migração rodar
+_CAMPOS_ITEM_C = ("eap_uc_id", "eap_codigo", "eap_descricao")
+CAMPOS_EXTRA = ("motivo", "condicao", "transferencia_id", "obra_contraparte", "requisicao_id",
+                "contagem_id")
 
 
 def _checar(r: httpx.Response):
@@ -206,7 +211,8 @@ def _in(valores) -> str:
 def registrar(usuario, obra, operacao, movement_type_id, document_id,
               movement_date, sienge_status, sienge_movement_id, sienge_resposta,
               itens, estorno_de=None, terceiro=None, solicitante=None,
-              status="gravado") -> list[int]:
+              status="gravado", extra: dict | None = None) -> list[int]:
+    ext = {k: v for k, v in (extra or {}).items() if k in CAMPOS_EXTRA and v is not None}
     linhas = [{
         "usuario": usuario, "obra": str(obra),
         "resource_id": str(it["resource_id"]), "descricao": it.get("descricao"),
@@ -217,7 +223,11 @@ def registrar(usuario, obra, operacao, movement_type_id, document_id,
         "sienge_resposta": sienge_resposta, "estorno_de": estorno_de,
         "terceiro": terceiro, "solicitante": solicitante, "status": status,
         **{k: it.get(k) for k in _CAMPOS_ITEM},
+        **{k: it[k] for k in _CAMPOS_ITEM_C if it.get(k) is not None},
+        **ext,
     } for it in itens]
+    chaves = set().union(*(l.keys() for l in linhas)) if linhas else set()
+    linhas = [{k: l.get(k) for k in chaves} for l in linhas]  # PostgREST: mesmas chaves em todas
     with httpx.Client(timeout=TIMEOUT) as cli:
         r = cli.post(f"{_url()}{TBL}", headers={**_headers_admin(), "Prefer": "return=representation"},
                      json=linhas)
@@ -265,6 +275,35 @@ def historico(obra: str, limite: int = 200) -> list[dict]:
                     headers=_headers_admin())
         r.raise_for_status()
         return r.json()
+
+
+def _todas(params: dict) -> list[dict]:
+    """GET paginado (o PostgREST corta em 1000 linhas por resposta)."""
+    out, passo = [], 1000
+    with httpx.Client(timeout=TIMEOUT) as cli:
+        while True:
+            r = cli.get(f"{_url()}{TBL}", params={**params, "offset": len(out), "limit": passo},
+                        headers=_headers_admin())
+            _checar(r)
+            lote = r.json()
+            out += lote
+            if len(lote) < passo:
+                return out
+
+
+def consumo_eap(obra: str) -> list[dict]:
+    """Baixas gravadas e não estornadas (com ou sem EAP) — base do consumo × orçado."""
+    return _todas({"obra": f"eq.{obra}", "operacao": "eq.baixa", "status": "eq.gravado",
+                   "estornado": "is.false", "order": "id.asc",
+                   "select": "id,criado_em,resource_id,descricao,quantidade,unidade,detail_id,"
+                             "trademark_id,eap_uc_id,eap_codigo,eap_descricao"})
+
+
+def por_vinculo(campo: str, valor) -> list[dict]:
+    """Linhas ligadas a uma transferência/requisição/contagem."""
+    if campo not in ("transferencia_id", "requisicao_id", "contagem_id"):
+        raise ValueError(campo)
+    return _todas({campo: f"eq.{valor}", "order": "id.asc"})
 
 
 def por_id(aud_id: int) -> dict | None:
