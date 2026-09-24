@@ -387,6 +387,7 @@ def _perfil_norm(row: dict | None, email: str) -> dict:
         "email": email, "nome": row.get("nome"), "cargo": row.get("cargo"),
         "tipo": row.get("tipo") or "Geral", "ativo": row.get("ativo", True),
         "role": (row.get("role") or "user"),
+        "perfil": row.get("perfil"),                  # perfil de acesso de origem (almoxarife, engenheiro…)
         "modulos": row.get("modulos") or [],          # [] = todos
         "obras": row.get("obras") or [],              # [] = todas
         "gerenciar_usuarios": bool(row.get("gerenciar_usuarios") or (row.get("role") or "").lower() == "admin"),
@@ -402,43 +403,6 @@ def eu(usuario: str = Depends(usuario_logado)):
         return {"email": usuario, "nome": usuario, "tipo": "Geral", "ativo": True, "role": "admin",
                 "modulos": [], "obras": [], "gerenciar_usuarios": True, "operar": True, "gerar_plano": True}
     return _perfil_norm(supa.perms_do_email(usuario), usuario)
-
-
-@app.get("/api/usuarios")
-def usuarios_listar(usuario: str = Depends(usuario_gestor)):
-    if not _auth_ativo():
-        return {"usuarios": [], "modulos": _MODULOS}
-    linhas = [_perfil_norm(r, r.get("email")) for r in supa.listar_usuarios()]
-    return {"usuarios": linhas, "modulos": _MODULOS}
-
-
-class UsuarioIn(BaseModel):
-    email: str
-    nome: str | None = None
-    cargo: str | None = None
-    tipo: str | None = "Geral"
-    ativo: bool = True
-    role: str | None = "user"
-    modulos: list[str] = []
-    obras: list[str] = []
-    gerenciar_usuarios: bool = False
-    operar: bool = False
-    gerar_plano: bool = False
-
-
-@app.post("/api/usuarios")
-def usuarios_salvar(corpo: UsuarioIn, usuario: str = Depends(usuario_gestor)):
-    email = (corpo.email or "").strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(422, "E-mail inválido.")
-    dados = corpo.model_dump()
-    dados["email"] = email
-    dados["modulos"] = [m for m in corpo.modulos if m in _MODULOS]
-    try:
-        salvo = supa.upsert_usuario(dados)
-    except supa.AuthError as e:
-        raise HTTPException(e.status if getattr(e, "status", 0) else 422, e.msg)
-    return _perfil_norm(salvo, email)
 
 
 @app.get("/api/estoque/material")
@@ -1635,3 +1599,7 @@ def estorno(corpo: Estorno, usuario: str = Depends(usuario_admin)):
 # ---- passos 08-10: EAP no consumo, transferências, requisições e inventário ----
 import operacoes  # noqa: E402  (usa os helpers acima)
 app.include_router(operacoes.router)
+
+# ---- gestão de usuários (status de acesso, link de convite, histórico) ----
+import usuarios  # noqa: E402
+app.include_router(usuarios.router)

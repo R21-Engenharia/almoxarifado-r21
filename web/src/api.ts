@@ -243,6 +243,17 @@ export interface Conta {
   email: string; nome: string | null; cargo: string | null; tipo: string
   ativo: boolean; role: string; modulos: string[]; obras: string[]
   gerenciar_usuarios: boolean; operar: boolean; gerar_plano: boolean
+  perfil?: string | null
+}
+// linha da gestão de usuários: permissões + situação da conta no login
+export type StatusConta = 'ativo' | 'convidado' | 'sem_acesso' | 'inativo'
+export interface UsuarioLista extends Conta {
+  foto_url?: string | null; status: StatusConta; ultimo_acesso: string | null; convidado_em: string | null
+  provedores: string[]; tem_conta: boolean; atualizado_em?: string | null; atualizado_por?: string | null
+}
+export interface EventoUsuario {
+  id: number; quando: string; por: string; email: string; acao: string
+  antes: Record<string, unknown> | null; depois: Record<string, unknown> | null
 }
 
 import { supabase } from './supabase'
@@ -276,7 +287,11 @@ export const api = {
   health: () => fetch(API_BASE + '/api/health').then(j<{ ok: boolean; modo: string; auth: boolean }>),
   obras: () => req<Obra[]>('/api/obras'),
   eu: () => req<Conta>('/api/eu'),
-  usuarios: () => req<{ usuarios: Conta[]; modulos: string[] }>('/api/usuarios'),
+  usuarios: () => req<{ usuarios: UsuarioLista[]; modulos: string[] }>('/api/usuarios'),
+  linkAcesso: (email: string) => req<{ link: string; tipo: 'invite' | 'recovery' }>('/api/usuarios/link', {
+    method: 'POST', body: JSON.stringify({ email, redirect_to: window.location.origin }),
+  }),
+  eventosUsuario: (email: string) => req<{ eventos: EventoUsuario[] }>(`/api/usuarios/eventos?email=${encodeURIComponent(email)}`),
   salvarUsuario: (u: Partial<Conta> & { email: string }) =>
     req<Conta>('/api/usuarios', { method: 'POST', body: JSON.stringify(u) }),
   material: (obra: string, janela = 90) =>

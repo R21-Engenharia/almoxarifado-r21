@@ -6,7 +6,7 @@ import {
 } from './api'
 import { EapCampo } from './Eap'
 import { useEapLista, renovarEap, eapTexto } from './eapDados'
-import { supabase, authAtiva } from './supabase'
+import { supabase, authAtiva, linkAcesso } from './supabase'
 import { Avatar, PerfilModal } from './PerfilCard'
 import { carregarPerfil, dadosDaSessao, type Perfil, type DadosGoogle } from './perfil'
 import Loader from './Loader'
@@ -117,17 +117,29 @@ export default function App() {
   const [google, setGoogle] = useState<DadosGoogle>({ nome: '', foto: '', email: '' })
   const [mostrarPerfil, setMostrarPerfil] = useState(false)
   const [perfilObrigatorio, setPerfilObrigatorio] = useState(false)
+  // chegou pelo link de acesso (convite ou redefinição): primeiro define a senha
+  const [definirSenha, setDefinirSenha] = useState(authAtiva && (linkAcesso.tipo === 'invite' || linkAcesso.tipo === 'recovery'))
 
   useEffect(() => {
     if (!authAtiva || !supabase) return
     supabase.auth.getSession().then(({ data }) => {
       setUsuario(data.session?.user.email ?? null); setCarregandoSessao(false)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((e, session) => {
       setUsuario(session?.user.email ?? null)
+      if (e === 'PASSWORD_RECOVERY') setDefinirSenha(true)
     })
     return () => sub.subscription.unsubscribe()
   }, [])
+
+  // permissões valem na hora: relê o perfil ao voltar para a aba e a cada 2 min
+  useEffect(() => {
+    if (!usuario) return
+    const reler = () => { if (document.visibilityState === 'visible') api.eu().then(setConta).catch(() => {}) }
+    const t = window.setInterval(reler, 120000)
+    document.addEventListener('visibilitychange', reler)
+    return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', reler) }
+  }, [usuario])
 
   useEffect(() => {
     if (!usuario) return
@@ -156,6 +168,8 @@ export default function App() {
 
   if (carregandoSessao) return <Loader full label="o BOX21" dica="Verificando seu acesso…" />
   if (!usuario) return <Login />
+  if (definirSenha) return <DefinirSenha email={usuario} convite={linkAcesso.tipo === 'invite'}
+    onPronto={() => { setDefinirSenha(false); window.history.replaceState(null, '', window.location.pathname) }} />
 
   const sair = async () => { if (supabase) await supabase.auth.signOut(); setUsuario(null); setPerfil(null) }
   const nomeExibicao = perfil?.nome || google.nome || usuario
@@ -259,8 +273,19 @@ export default function App() {
 function Login() {
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
-  const [erro, setErro] = useState('')
+  const [erro, setErro] = useState(linkAcesso.erro
+    ? 'Este link de acesso expirou ou já foi usado. Peça um novo ao administrador do BOX21.' : '')
+  const [aviso, setAviso] = useState('')
   const [carregando, setCarregando] = useState(false)
+
+  const esqueci = async () => {
+    if (!supabase) return
+    if (!email.trim() || !email.includes('@')) { setErro('Digite seu e-mail acima e clique de novo em "Esqueci minha senha".'); return }
+    setErro(''); setAviso('')
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin })
+    if (error) setErro('Não foi possível enviar agora. Peça ao administrador um link de acesso.')
+    else setAviso('Se este e-mail tem acesso, chega um link para definir a senha. Não chegou em alguns minutos? Peça ao administrador um link de acesso.')
+  }
 
   const entrar = async () => {
     if (!supabase) return
@@ -292,13 +317,51 @@ function Login() {
           onChange={e => setSenha(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && entrar()} />
         {erro && <div className="msg bad" style={{ marginBottom: 12 }}>{erro}</div>}
+        {aviso && <div className="msg ok" style={{ marginBottom: 12 }}>{aviso}</div>}
         <button disabled={!email.trim() || !senha || carregando} onClick={entrar}>
           {carregando ? 'Entrando…' : 'Entrar'}</button>
+        <button className="link-btn" onClick={esqueci}>Esqueci minha senha</button>
         <div className="ou"><span>ou</span></div>
         <button className="google" onClick={google}>
           <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.9 2.4 30.4 0 24 0 14.6 0 6.4 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.1 5.3-4.6 7l7.1 5.5c4.1-3.8 6.5-9.4 6.5-16z"/><path fill="#FBBC05" d="M10.4 28.3c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7.9-6.1C.9 16.1 0 19.9 0 24s.9 7.9 2.5 11.1l7.9-6.8z"/><path fill="#34A853" d="M24 48c6.4 0 11.9-2.1 15.9-5.8l-7.1-5.5c-2 1.3-4.6 2.1-8.8 2.1-6.3 0-11.7-3.7-13.6-9.3l-7.9 6.8C6.4 42.6 14.6 48 24 48z"/></svg>
           Entrar com Google
         </button>
+      </div>
+    </div>
+  )
+}
+
+// primeiro acesso pelo link (convite) ou redefinição de senha
+function DefinirSenha({ email, convite, onPronto }: { email: string; convite: boolean; onPronto: () => void }) {
+  const [senha, setSenha] = useState('')
+  const [senha2, setSenha2] = useState('')
+  const [erro, setErro] = useState('')
+  const [salvando, setSalvando] = useState(false)
+  const fraca = senha.length > 0 && senha.length < 8
+  const salvar = async () => {
+    if (!supabase) return
+    if (senha.length < 8) { setErro('A senha precisa ter pelo menos 8 caracteres.'); return }
+    if (senha !== senha2) { setErro('As duas senhas não são iguais.'); return }
+    setErro(''); setSalvando(true)
+    const { error } = await supabase.auth.updateUser({ password: senha })
+    setSalvando(false)
+    if (error) setErro('Não foi possível salvar a senha: ' + error.message)
+    else onPronto()
+  }
+  return (
+    <div className="ident">
+      <div className="ident-card">
+        <img src="/box21.png" alt="BOX21" className="ident-logo" />
+        <p className="ident-tag">{convite ? 'Bem-vindo(a) ao BOX21' : 'Nova senha'}</p>
+        <p>{convite ? 'Crie sua senha para entrar' : 'Defina a nova senha de'} <b>{email}</b>.
+          {convite && ' Nas próximas vezes, entre com este e-mail e esta senha.'}</p>
+        <input type="password" placeholder="nova senha (mín. 8 caracteres)" value={senha} autoFocus
+          onChange={e => setSenha(e.target.value)} />
+        <input type="password" placeholder="repita a senha" value={senha2}
+          onChange={e => setSenha2(e.target.value)} onKeyDown={e => e.key === 'Enter' && salvar()} />
+        {fraca && <div className="op-hint" style={{ marginBottom: 10 }}>Use pelo menos 8 caracteres.</div>}
+        {erro && <div className="msg bad" style={{ marginBottom: 12 }}>{erro}</div>}
+        <button disabled={salvando || !senha || !senha2} onClick={salvar}>{salvando ? 'Salvando…' : 'Salvar senha e entrar'}</button>
       </div>
     </div>
   )
